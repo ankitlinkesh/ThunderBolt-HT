@@ -65,11 +65,18 @@ int run_all();
 #define TB_TEST_CAT(a, b)  TB_TEST_CAT_(a, b)
 
 // Defines and registers a test case.
-#define TB_TEST(name)                                                              \
-    static void TB_TEST_CAT(tb_test_fn_, __LINE__)();                              \
-    static const ::thunderbolt::test::Registrar TB_TEST_CAT(tb_test_reg_, __LINE__)( \
-        name, __FILE__, __LINE__, &TB_TEST_CAT(tb_test_fn_, __LINE__));            \
-    static void TB_TEST_CAT(tb_test_fn_, __LINE__)()
+//
+// Identifiers are keyed on __COUNTER__, not __LINE__. A macro that expands to
+// several TB_TEST cases - as the runtime conformance suite does, registering one
+// suite per runtime - puts them all on the SAME source line, so __LINE__ would
+// collide and only the first case would compile. __COUNTER__ is unique per use.
+#define TB_TEST(name) TB_TEST_IMPL(name, __COUNTER__)
+
+#define TB_TEST_IMPL(name, id)                                                     \
+    static void TB_TEST_CAT(tb_test_fn_, id)();                                    \
+    static const ::thunderbolt::test::Registrar TB_TEST_CAT(tb_test_reg_, id)(     \
+        name, __FILE__, __LINE__, &TB_TEST_CAT(tb_test_fn_, id));                  \
+    static void TB_TEST_CAT(tb_test_fn_, id)()
 
 #define TB_CHECK(expr)                                                             \
     do {                                                                           \

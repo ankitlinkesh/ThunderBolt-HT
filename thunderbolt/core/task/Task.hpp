@@ -20,14 +20,7 @@ namespace thunderbolt {
 // every state transition - a slowdown that looks exactly like poor scheduling
 // while actually being layout.
 //
-// MSVC warns (C4324) that the alignment introduces padding. That padding IS the
-// feature: it is what keeps two tasks off one line. Suppressed here rather than
-// project-wide, so the warning still fires anywhere it would be a surprise.
-#if defined(_MSC_VER)
-#  pragma warning(push)
-#  pragma warning(disable : 4324)
-#endif
-
+TB_BEGIN_CACHE_ALIGNED_TYPE
 struct alignas(kCacheLineSize) Task {
     TaskFunction function;
 
@@ -48,9 +41,7 @@ struct alignas(kCacheLineSize) Task {
     Task& operator=(const Task&) = delete;
 };
 
-#if defined(_MSC_VER)
-#  pragma warning(pop)
-#endif
+TB_END_CACHE_ALIGNED_TYPE
 
 // Pinned so that growing a task is a deliberate act with a visible cost: the
 // pool allocates capacity * sizeof(Task) up front, and task size is one of the

@@ -17,6 +17,18 @@ namespace thunderbolt {
 // across toolchains, which the determinism work depends on.
 inline constexpr std::size_t kCacheLineSize = 64;
 
+// MSVC warns (C4324) whenever alignas() introduces padding. For every type in
+// this project that padding IS the feature - it is what keeps two hot atomics off
+// one cache line. Suppressed around those declarations specifically rather than
+// project-wide, so the warning still fires somewhere it would be a surprise.
+#if defined(_MSC_VER)
+#  define TB_BEGIN_CACHE_ALIGNED_TYPE __pragma(warning(push)) __pragma(warning(disable : 4324))
+#  define TB_END_CACHE_ALIGNED_TYPE   __pragma(warning(pop))
+#else
+#  define TB_BEGIN_CACHE_ALIGNED_TYPE
+#  define TB_END_CACHE_ALIGNED_TYPE
+#endif
+
 // S13. Ordering matters: lower numeric value == more urgent, so priority
 // comparisons are plain integer comparisons on the hot path.
 enum class TaskPriority : std::uint8_t {

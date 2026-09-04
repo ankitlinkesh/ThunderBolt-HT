@@ -1,0 +1,359 @@
+#include <thunderbolt/runtime/ThunderboltRuntime.hpp>
+
+#include <thunderbolt/cpu/affinity/Affinity.hpp>
+
+#include <cassert>
+#include <utility>
+
+namespace thunderbolt {
+namespace {
+
+struct WorkerIdentity {
+    const void*   owner = nullptr;
+    std::uint32_t index = TaskContext::kExternalThread;
+};
+
+thread_local WorkerIdentity t_identity;
+
+// Spin attempts before a worker parks. Chosen to cover the gap between two
+// dependent tasks in a frame graph without burning a measurable slice of a 15 W
+// power budget; Phase G revisits it with data rather than intuition.
+constexpr int kSpinsBeforePark = 64;
+
+// Tasks pulled from the global queue in one go. Large enough that the global lock
+// is amortised, small enough that one worker cannot hoard an entire injection
+// burst and leave the others idle.
+constexpr int kGlobalDrainBatch = 32;
+
+inline std::uint64_t xorshift64(std::uint64_t& state) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return state;
+}
+
+} // namespace
+
+ThunderboltRuntime::ThunderboltRuntime(RuntimeConfig config) : RuntimeBase(config) {
+    worker_count_ = resolve_worker_count(config);
+
+    // Deque capacity is per worker per priority. Overflow is handled (it spills
+    // to the global queue and is counted), so this is a tuning parameter rather
+    // than a correctness limit.
+    const std::size_t per_queue_capacity = 1024;
+
+    workers_.reserve(worker_count_);
+    for (std::uint32_t i = 0; i < worker_count_; ++i) {
+        auto worker = std::make_unique<WorkerState>();
+        for (std::size_t p = 0; p < kPriorityCount; ++p) {
+            worker->queues[p] = std::make_unique<AbpDeque<TaskHandle>>(per_queue_capacity);
+        }
+        // Seeded per worker and never zero - xorshift is absorbing at zero, which
+        // would make one worker always pick the same victim.
+        worker->rng = 0x9E3779B97F4A7C15ull * (static_cast<std::uint64_t>(i) + 1);
+        workers_.push_back(std::move(worker));
+    }
+
+    running_.store(true, std::memory_order_release);
+
+    threads_.reserve(worker_count_);
+    for (std::uint32_t i = 0; i < worker_count_; ++i) {
+        threads_.emplace_back([this, i] { worker_loop(i); });
+    }
+}
+
+ThunderboltRuntime::~ThunderboltRuntime() {
+    // Drain before stopping, so shutdown never silently discards queued work.
+    wait_all();
+
+    running_.store(false, std::memory_order_release);
+    {
+        std::lock_guard lock(sleep_mutex_);
+        sleep_cv_.notify_all();
+    }
+
+    for (std::thread& thread : threads_) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+}
+
+bool ThunderboltRuntime::on_own_worker(std::uint32_t& out_index) const {
+    if (t_identity.owner == this) {
+        out_index = t_identity.index;
+        return true;
+    }
+    return false;
+}
+
+TaskHandle ThunderboltRuntime::submit(TaskDesc desc) {
+    const TaskPriority priority = desc.priority;
+
+    TaskHandle handle = acquire_task(std::move(desc));
+    if (!handle.valid()) {
+        run_inline(std::move(desc));
+        return TaskHandle{};
+    }
+
+    Task* task = pool().get(handle);
+    assert(task != nullptr);
+    task->state.store(TaskState::Queued, std::memory_order_release);
+
+    std::uint32_t worker_index = TaskContext::kExternalThread;
+    bool          queued_local = false;
+
+    if (on_own_worker(worker_index)) {
+        // Submitted from inside a task: push onto the submitting worker's own
+        // deque. This is the locality that makes work stealing worth having -
+        // a task's children stay on the core that produced them, and are only
+        // pulled away when another worker would otherwise sit idle.
+        WorkerState& worker = *workers_[worker_index];
+        queued_local = worker.queues[static_cast<std::size_t>(priority)]->push(handle);
+
+        if (!queued_local) {
+            // Bounded deque full. Spilling to the global queue keeps the task
+            // running somewhere rather than blocking or growing the deque; the
+            // counter says how often the capacity was too small.
+            local_overflows_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    if (queued_local) {
+        submissions_local_.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        submissions_global_.fetch_add(1, std::memory_order_relaxed);
+        global_.push(handle, priority);
+    }
+
+    wake_one_worker();
+    return handle;
+}
+
+void ThunderboltRuntime::wake_one_worker() {
+    // The work is already visible at this point. Reading sleeping_ after
+    // publishing it is a Store-Load pair, so it needs the same seq_cst fence as
+    // the completion path in RuntimeBase: without it, this thread can read
+    // "nobody is asleep" while a worker simultaneously fails to see the work and
+    // goes to sleep anyway.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (sleeping_.load(std::memory_order_relaxed) == 0) {
+        return;  // fast path: everyone is busy, no wakeup needed
+    }
+
+    {
+        std::lock_guard lock(sleep_mutex_);
+    }
+    sleep_cv_.notify_one();
+}
+
+TaskHandle ThunderboltRuntime::pop_local(WorkerState& worker) {
+    for (std::size_t p = 0; p < kPriorityCount; ++p) {
+        TaskHandle handle;
+        if (worker.queues[p]->pop(handle)) {
+            return handle;
+        }
+    }
+    return TaskHandle{};
+}
+
+TaskHandle ThunderboltRuntime::drain_global(WorkerState& worker) {
+    TaskHandle first = global_.pop();
+    if (!first.valid()) {
+        return TaskHandle{};
+    }
+
+    worker.global_pops.fetch_add(1, std::memory_order_relaxed);
+
+    // Pull a few more into the local deque while we hold the cache line warm.
+    // These become stealable, so a burst submitted from outside still spreads
+    // across workers rather than serialising on the global lock.
+    for (int i = 1; i < kGlobalDrainBatch; ++i) {
+        TaskHandle extra = global_.pop();
+        if (!extra.valid()) {
+            break;
+        }
+        // Safe to dereference: we popped this handle, so no other thread has
+        // claimed it and nothing can have completed or recycled it yet.
+        const Task* task = pool().get(extra);
+        assert(task != nullptr && "handle popped from the global queue must resolve");
+        const TaskPriority priority = task->priority;
+
+        if (!worker.queues[static_cast<std::size_t>(priority)]->push(extra)) {
+            global_.push(extra, priority);  // local deque full; put it back
+            break;
+        }
+    }
+
+    return first;
+}
+
+TaskHandle ThunderboltRuntime::steal_from_others(WorkerState& worker,
+                                                 std::uint32_t worker_index) {
+    if (worker_count_ <= 1) {
+        return TaskHandle{};
+    }
+
+    worker.steal_attempts.fetch_add(1, std::memory_order_relaxed);
+
+    // Randomised victim selection, as the Blumofe-Leiserson bound assumes.
+    // Deterministic scanning (always try worker 0 first) makes early workers hot
+    // and skews which deque is contended, which shows up as a scheduling result
+    // that is really an artefact of the victim policy.
+    const std::uint32_t start = static_cast<std::uint32_t>(xorshift64(worker.rng) % worker_count_);
+
+    for (std::uint32_t offset = 0; offset < worker_count_; ++offset) {
+        const std::uint32_t victim_index = (start + offset) % worker_count_;
+        if (victim_index == worker_index) {
+            continue;
+        }
+
+        WorkerState& victim = *workers_[victim_index];
+        for (std::size_t p = 0; p < kPriorityCount; ++p) {
+            TaskHandle handle;
+            const StealOutcome outcome = victim.queues[p]->steal(handle);
+            if (outcome == StealOutcome::Success) {
+                worker.steals_succeeded.fetch_add(1, std::memory_order_relaxed);
+                return handle;
+            }
+            // Abort means we lost a race, which implies work IS there. Retrying
+            // the same victim immediately would just lose again to the thread
+            // that beat us, so fall through to the next one.
+        }
+    }
+
+    worker.steals_failed.fetch_add(1, std::memory_order_relaxed);
+    return TaskHandle{};
+}
+
+TaskHandle ThunderboltRuntime::acquire_next(WorkerState& worker, std::uint32_t worker_index) {
+    // Order: local, then global, then steal.
+    //
+    // S10's sketch puts stealing before the global queue. Deviating deliberately:
+    // with steal-before-global, externally submitted work is only picked up once
+    // every worker has drained AND failed to steal, so a workload whose tasks
+    // spawn their own children can starve the injection queue indefinitely.
+    // Checking global first costs one relaxed atomic load when it is empty, which
+    // is the common case, and stealing stays the last resort - which is also the
+    // right order by cost, since a steal touches another core's cache line.
+    if (TaskHandle handle = pop_local(worker); handle.valid()) {
+        return handle;
+    }
+    if (TaskHandle handle = drain_global(worker); handle.valid()) {
+        return handle;
+    }
+    return steal_from_others(worker, worker_index);
+}
+
+bool ThunderboltRuntime::any_work_available() const {
+    if (global_.size_hint() > 0) {
+        return true;
+    }
+    for (const auto& worker : workers_) {
+        for (std::size_t p = 0; p < kPriorityCount; ++p) {
+            if (!worker->queues[p]->empty_hint()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void ThunderboltRuntime::park_worker(WorkerState& worker) {
+    std::unique_lock lock(sleep_mutex_);
+
+    // Register as sleeping BEFORE the final check, not after.
+    //
+    // The other order loses wakeups: a submitter could publish work and read
+    // sleeping_ == 0 in the window between this thread's check and its
+    // increment, decide no notification is needed, and leave this worker asleep
+    // with runnable work in the system. Incrementing first means a submitter
+    // either sees the increment (and must take this mutex to notify, which it
+    // cannot do until we are inside wait) or publishes before our check (and we
+    // see the work and never sleep).
+    sleeping_.fetch_add(1, std::memory_order_seq_cst);
+
+    if (!running_.load(std::memory_order_acquire) || any_work_available()) {
+        sleeping_.fetch_sub(1, std::memory_order_seq_cst);
+        return;
+    }
+
+    worker.parks.fetch_add(1, std::memory_order_relaxed);
+    sleep_cv_.wait(lock);
+    sleeping_.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+bool ThunderboltRuntime::try_execute_one(TaskContext& ctx) {
+    // Used by help-on-wait, which may run on any worker of this runtime.
+    std::uint32_t worker_index = TaskContext::kExternalThread;
+    if (!on_own_worker(worker_index)) {
+        return false;
+    }
+
+    WorkerState& worker = *workers_[worker_index];
+    TaskHandle   handle = acquire_next(worker, worker_index);
+    if (!handle.valid()) {
+        return false;
+    }
+
+    worker.executed.fetch_add(1, std::memory_order_relaxed);
+    execute(handle, ctx);
+    return true;
+}
+
+void ThunderboltRuntime::worker_loop(std::uint32_t worker_index) {
+    t_identity.owner = this;
+    t_identity.index = worker_index;
+
+    if (apply_worker_affinity(worker_index, config().affinity)) {
+        pinned_workers_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    WorkerState& worker = *workers_[worker_index];
+    TaskContext  ctx{this, worker_index};
+
+    int idle_spins = 0;
+
+    while (running_.load(std::memory_order_acquire)) {
+        TaskHandle handle = acquire_next(worker, worker_index);
+
+        if (handle.valid()) {
+            idle_spins = 0;
+            worker.executed.fetch_add(1, std::memory_order_relaxed);
+            execute(handle, ctx);
+            continue;
+        }
+
+        // Nothing anywhere. Spin briefly before parking: in a frame graph the
+        // next task usually appears within microseconds, and a condition-variable
+        // round trip costs more than the spin does.
+        if (++idle_spins < kSpinsBeforePark) {
+            std::this_thread::yield();
+            continue;
+        }
+
+        park_worker(worker);
+        idle_spins = 0;
+    }
+
+    t_identity.owner = nullptr;
+    t_identity.index = TaskContext::kExternalThread;
+}
+
+ThunderboltStats ThunderboltRuntime::stats() const {
+    ThunderboltStats out;
+    for (const auto& worker : workers_) {
+        out.tasks_executed += worker->executed.load(std::memory_order_relaxed);
+        out.steal_attempts += worker->steal_attempts.load(std::memory_order_relaxed);
+        out.steals_succeeded += worker->steals_succeeded.load(std::memory_order_relaxed);
+        out.steals_failed += worker->steals_failed.load(std::memory_order_relaxed);
+        out.global_pops += worker->global_pops.load(std::memory_order_relaxed);
+        out.worker_parks += worker->parks.load(std::memory_order_relaxed);
+    }
+    out.local_overflows    = local_overflows_.load(std::memory_order_relaxed);
+    out.submissions_local  = submissions_local_.load(std::memory_order_relaxed);
+    out.submissions_global = submissions_global_.load(std::memory_order_relaxed);
+    return out;
+}
+
+} // namespace thunderbolt

@@ -25,8 +25,12 @@ set(THUNDERBOLT_VERSION_STRING "0.1.0")
 
 add_library(thunderbolt STATIC
     core/task/TaskPool.cpp
+    cpu/affinity/Affinity.cpp
+    cpu/topology/CpuTopology.cpp
     runtime/BuildInfo.cpp
+    runtime/RuntimeBase.cpp
     runtime/StandardRuntime.cpp
+    runtime/ThunderboltRuntime.cpp
 )
 add_library(thunderbolt::thunderbolt ALIAS thunderbolt)
 
@@ -59,6 +63,11 @@ set_target_properties(thunderbolt PROPERTIES
 # without any part of the game being present.
 # ---------------------------------------------------------------------------
 option(THUNDERBOLT_BUILD_TESTS "Build Thunderbolt HT unit tests" ON)
+option(THUNDERBOLT_BUILD_EXAMPLES "Build Thunderbolt HT example programs" ON)
+
+if(THUNDERBOLT_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
 
 if(THUNDERBOLT_BUILD_TESTS)
     include(CTest)

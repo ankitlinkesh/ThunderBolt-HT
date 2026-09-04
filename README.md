@@ -12,7 +12,7 @@ together with a real-time simulation used as its flagship benchmark workload.
 
 ## Status
 
-**Phase B complete.** Read this section before any other — the rest of this document
+**Phase C complete.** Read this section before any other — the rest of this document
 describes the design, and this section describes what actually exists today.
 
 | | |
@@ -20,17 +20,22 @@ describes the design, and this section describes what actually exists today.
 | Build system, toolchain pinning, three configurations | ✅ built and verified |
 | Architectural guard tests (layering, standalone build) | ✅ built and verified |
 | Task core, `ITaskRuntime`, StandardRuntime | ✅ built and verified |
-| Worker pool, work-stealing deque | ⬜ Phase C |
+| Worker pool, work-stealing deque, CPU topology | ✅ built and verified |
 | Task dependencies / task graph | ⬜ Phase D |
 | Profiler, benchmark harness | ⬜ Phase E |
 | Headless deterministic simulation | ⬜ Phase F |
 | Adaptive scheduling modes | ⬜ Phase G |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
-38 unit tests cover the task core and the baseline runtime, and pass under Debug, Release and
-AddressSanitizer. Because ThreadSanitizer is unavailable here, the concurrency tests are also
-run repeatedly rather than once: 75 consecutive clean runs across the three configurations at
-the time of writing. That is weaker evidence than a race detector and is treated as such.
+76 unit tests pass under Debug, Release and AddressSanitizer. **17 of them are a single
+conformance suite run against *both* runtimes** — that is the structural guarantee behind the
+A/B methodology: if StandardRuntime and ThunderboltRuntime ever disagree about what the task
+API means, the build fails rather than the disagreement being measured later and reported as a
+scheduling result.
+
+Because ThreadSanitizer is unavailable here, the concurrency tests are also run repeatedly
+rather than once: 60 consecutive clean runs across the three configurations at the time of
+writing. That is weaker evidence than a race detector and is treated as such.
 
 **No performance numbers are published yet, because none have been measured.** Every figure
 that ever appears in this README will be traceable to a machine-readable result file produced
@@ -115,6 +120,13 @@ To verify the runtime really is independent of the simulation:
 
 ```
 cmake -S thunderbolt -B build/standalone
+```
+
+To confirm CPU topology detection actually queried the OS rather than taking its fallback path
+— the unit tests tolerate the fallback, so this is the check a human runs on real hardware:
+
+```
+./build/dev/bin/Release/thunderbolt_topology_report
 ```
 
 ---
