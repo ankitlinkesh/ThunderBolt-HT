@@ -112,11 +112,12 @@ TaskHandle StandardRuntime::submit(TaskDesc desc) {
     return handle;
 }
 
-TaskHandle StandardRuntime::try_pop() {
-    std::lock_guard lock(queue_mutex_);
+TaskHandle StandardRuntime::pop_locked() {
     if (queued_count_ == 0) {
         return TaskHandle{};
     }
+    // Scan highest priority first (S13). FIFO within a priority, which is what
+    // stops a steady stream of same-priority work from reordering arbitrarily.
     for (std::size_t p = 0; p < kPriorityCount; ++p) {
         std::deque<TaskHandle>& q = ready_[p];
         if (!q.empty()) {
@@ -127,6 +128,11 @@ TaskHandle StandardRuntime::try_pop() {
         }
     }
     return TaskHandle{};
+}
+
+TaskHandle StandardRuntime::try_pop() {
+    std::lock_guard lock(queue_mutex_);
+    return pop_locked();
 }
 
 void StandardRuntime::execute(TaskHandle handle, TaskContext& ctx) {
@@ -213,15 +219,7 @@ void StandardRuntime::worker_loop(std::uint32_t worker_index) {
                 continue;
             }
 
-            for (std::size_t p = 0; p < kPriorityCount; ++p) {
-                std::deque<TaskHandle>& q = ready_[p];
-                if (!q.empty()) {
-                    handle = q.front();
-                    q.pop_front();
-                    --queued_count_;
-                    break;
-                }
-            }
+            handle = pop_locked();
         }
 
         if (handle.valid()) {
@@ -299,6 +297,12 @@ void StandardRuntime::wait(TaskHandle handle) {
 }
 
 void StandardRuntime::wait_all() {
+    // Note the scope: this waits for the runtime to be IDLE, not for "the work I
+    // submitted". Tasks submitted by other threads after this call are included,
+    // so a worker calling wait_all() can be held for as long as anyone keeps
+    // submitting. That is intended - it is what makes wait_all() usable as a
+    // frame barrier - but it is not the "wait for my subtree" that callers
+    // sometimes assume. Phase D's dependency edges are the tool for that.
     if (outstanding_.load(std::memory_order_acquire) == 0) {
         return;
     }

@@ -140,6 +140,12 @@ TB_TEST("nested waits survive several levels of depth") {
 
     // Each level submits two children and waits for both, so the graph is wide
     // as well as deep - the shape most likely to expose a help-on-wait bug.
+    //
+    // NOTE: `rec` lives on this stack frame and tasks capture it by pointer.
+    // That is safe ONLY because every level waits for its children before
+    // returning. If this test is ever adapted to fire-and-forget submission -
+    // which Phase D's dependency edges make natural - the captured reference
+    // outlives the frame and the test becomes a use-after-free.
     struct Recursive {
         StandardRuntime&  runtime;
         std::atomic<int>& leaves;
@@ -309,11 +315,22 @@ TB_TEST("priorities are respected among already-queued work") {
     StandardRuntime runtime(config);
 
     std::atomic<bool> gate{false};
-    TaskHandle blocker = runtime.submit([&gate] {
+    std::atomic<bool> blocker_running{false};
+    TaskHandle blocker = runtime.submit([&gate, &blocker_running] {
+        blocker_running.store(true, std::memory_order_release);
         while (!gate.load(std::memory_order_acquire)) {
             std::this_thread::yield();
         }
     });
+
+    // Block until the single worker is demonstrably INSIDE the blocker. Without
+    // this the worker could start draining prioritized tasks as they arrive, and
+    // the recorded order would reflect submission timing rather than priority -
+    // a test that passes for the wrong reason and would keep passing after a
+    // scheduler change broke priorities.
+    while (!blocker_running.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
 
     std::mutex             order_mutex;
     std::vector<TaskPriority> order;
@@ -326,6 +343,10 @@ TB_TEST("priorities are respected among already-queued work") {
                          TaskPriority::Background);
     (void)runtime.submit([&record] { record(TaskPriority::Normal); }, TaskPriority::Normal);
     (void)runtime.submit([&record] { record(TaskPriority::Critical); }, TaskPriority::Critical);
+
+    // The blocker plus three queued tasks. Asserting this BEFORE opening the gate
+    // is what makes the expected order a consequence of the priority scan alone.
+    TB_CHECK_EQ(runtime.outstanding_task_count(), 4u);
 
     gate.store(true, std::memory_order_release);
     runtime.wait(blocker);

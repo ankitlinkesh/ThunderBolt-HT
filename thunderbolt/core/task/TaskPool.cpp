@@ -16,10 +16,22 @@ TaskPool::TaskPool(std::uint32_t capacity)
     }
 }
 
+void TaskPool::lock_counting(std::unique_lock<std::mutex>& lock) const {
+    // try_lock first: an uncontended acquisition is the same cost as a plain
+    // lock, and a failed attempt is exactly the definition of contention.
+    if (!lock.try_lock()) {
+        contended_locks_.fetch_add(1, std::memory_order_relaxed);
+        lock.lock();
+    }
+}
+
 TaskHandle TaskPool::acquire(TaskDesc&& desc) {
+    acquire_count_.fetch_add(1, std::memory_order_relaxed);
+
     std::uint32_t index = 0;
     {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_, std::defer_lock);
+        lock_counting(lock);
         if (free_list_.empty()) {
             return TaskHandle{};  // exhausted
         }
@@ -68,7 +80,9 @@ void TaskPool::release(TaskHandle handle) {
     task.generation.fetch_add(1, std::memory_order_relaxed);
     task.state.store(TaskState::Free, std::memory_order_release);
 
-    std::lock_guard lock(mutex_);
+    release_count_.fetch_add(1, std::memory_order_relaxed);
+    std::unique_lock lock(mutex_, std::defer_lock);
+    lock_counting(lock);
     free_list_.push_back(handle.index);
 }
 

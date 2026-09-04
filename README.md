@@ -27,7 +27,7 @@ describes the design, and this section describes what actually exists today.
 | Adaptive scheduling modes | ⬜ Phase G |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
-37 unit tests cover the task core and the baseline runtime, and pass under Debug, Release and
+38 unit tests cover the task core and the baseline runtime, and pass under Debug, Release and
 AddressSanitizer. Because ThreadSanitizer is unavailable here, the concurrency tests are also
 run repeatedly rather than once: 75 consecutive clean runs across the three configurations at
 the time of writing. That is weaker evidence than a race detector and is treated as such.

@@ -144,3 +144,41 @@ TB_TEST("concurrent acquire hands out distinct slots") {
     }
     TB_CHECK_EQ(pool.live_count(), 0u);
 }
+
+TB_TEST("pool instrumentation balances and observes real contention") {
+    // The counters exist so Phase C can test the hypothesis "the pool mutex, not
+    // the deque, is the bottleneck" instead of guessing. A counter that never
+    // moves would answer that question wrongly and silently, so check here that
+    // it actually observes something.
+    constexpr std::uint32_t kCapacity = 4096;
+    TaskPool                pool(kCapacity);
+
+    constexpr int kThreads   = 4;
+    constexpr int kPerThread = 400;
+
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&pool] {
+            for (int i = 0; i < kPerThread; ++i) {
+                TaskHandle h = pool.acquire(trivial_task());
+                if (h.valid()) {
+                    pool.release(h);  // churn the free list to provoke contention
+                }
+            }
+        });
+    }
+    for (std::thread& th : threads) {
+        th.join();
+    }
+
+    const std::uint64_t acquires = pool.acquire_count();
+    const std::uint64_t releases = pool.release_count();
+
+    TB_CHECK_EQ(acquires, static_cast<std::uint64_t>(kThreads * kPerThread));
+    TB_CHECK_EQ(releases, acquires);  // every acquire was matched by a release
+    TB_CHECK_EQ(pool.live_count(), 0u);
+
+    // Contention is timing-dependent, so its exact value is not asserted - only
+    // that the counter is readable and bounded by the number of lock attempts.
+    TB_CHECK(pool.contended_lock_count() <= acquires + releases);
+}

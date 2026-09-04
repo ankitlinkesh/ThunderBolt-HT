@@ -5,6 +5,7 @@
 #include <thunderbolt/api/TaskHandle.hpp>
 #include <thunderbolt/core/task/Task.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -52,7 +53,31 @@ public:
     // not for scheduling decisions.
     [[nodiscard]] std::uint32_t live_count() const;
 
+    // --- contention instrumentation ---------------------------------------
+    // The free-list mutex is taken twice per task (acquire + release). With eight
+    // workers submitting concurrently it is a strong candidate for the dominant
+    // contention point - quite possibly ahead of the work-stealing deque itself.
+    // If Phase C measures Thunderbolt losing to StandardRuntime, this is the
+    // first hypothesis, and these counters are what let it be CHECKED rather than
+    // guessed at.
+    //
+    // Measured by attempting try_lock first, so an uncontended acquisition costs
+    // nothing extra and a contended one is counted exactly.
+    [[nodiscard]] std::uint64_t acquire_count() const noexcept {
+        return acquire_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t release_count() const noexcept {
+        return release_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t contended_lock_count() const noexcept {
+        return contended_locks_.load(std::memory_order_relaxed);
+    }
+
 private:
+    // Takes mutex_, counting the acquisition as contended when it could not be
+    // taken immediately.
+    void lock_counting(std::unique_lock<std::mutex>& lock) const;
+
     std::uint32_t capacity_;
 
     // unique_ptr<Task[]> rather than vector<Task>: Task holds atomics and is
@@ -61,6 +86,10 @@ private:
 
     mutable std::mutex         mutex_;
     std::vector<std::uint32_t> free_list_;
+
+    mutable std::atomic<std::uint64_t> acquire_count_{0};
+    mutable std::atomic<std::uint64_t> release_count_{0};
+    mutable std::atomic<std::uint64_t> contended_locks_{0};
 };
 
 } // namespace thunderbolt

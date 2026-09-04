@@ -58,6 +58,14 @@ private:
     void worker_loop(std::uint32_t worker_index);
 
     // Pops the highest-priority ready task, or an invalid handle if none.
+    // Caller must hold queue_mutex_. Exists so the worker loop (which already
+    // holds the lock for its condition-variable wait) and the help-on-wait path
+    // share ONE scan rather than two copies that can drift apart - only one of
+    // which any given test would exercise.
+    [[nodiscard]] TaskHandle pop_locked();
+
+    // Lock-taking wrapper around pop_locked(), for callers not already holding
+    // queue_mutex_.
     [[nodiscard]] TaskHandle try_pop();
 
     // Runs one task if any is ready. Returns false when the queue was empty.
