@@ -65,6 +65,11 @@ set_target_properties(thunderbolt PROPERTIES
 # ---------------------------------------------------------------------------
 option(THUNDERBOLT_BUILD_TESTS "Build Thunderbolt HT unit tests" ON)
 option(THUNDERBOLT_BUILD_EXAMPLES "Build Thunderbolt HT example programs" ON)
+option(THUNDERBOLT_BUILD_BENCHMARKS "Build Thunderbolt HT benchmarks" ON)
+
+if(THUNDERBOLT_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()
 
 if(THUNDERBOLT_BUILD_EXAMPLES)
     add_subdirectory(examples)

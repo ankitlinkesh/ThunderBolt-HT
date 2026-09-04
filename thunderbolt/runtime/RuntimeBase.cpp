@@ -19,6 +19,17 @@ thread_local int t_wait_depth = 0;
 
 constexpr int kMaxWaitDepth = 256;
 
+// Nesting depth of execute() on this thread. Maintained in debug builds only, to
+// catch a specific and always-fatal misuse - see wait_all().
+#if THUNDERBOLT_DEBUG
+thread_local int t_executing_depth = 0;
+
+struct ExecutingGuard {
+    ExecutingGuard() { ++t_executing_depth; }
+    ~ExecutingGuard() { --t_executing_depth; }
+};
+#endif
+
 struct WaitDepthGuard {
     WaitDepthGuard() {
         ++t_wait_depth;
@@ -169,6 +180,10 @@ void RuntimeBase::execute(TaskHandle handle, TaskContext& ctx) {
     task->state.store(TaskState::Executing, std::memory_order_release);
 #endif
 
+#if THUNDERBOLT_DEBUG
+    ExecutingGuard executing_guard;
+#endif
+
     task->function(ctx);
     complete(handle);
 }
@@ -221,20 +236,28 @@ void RuntimeBase::complete(TaskHandle handle) {
     successors.clear();
 
     completed_.fetch_add(1, std::memory_order_relaxed);
-    outstanding_.fetch_sub(1, std::memory_order_acq_rel);
+    const std::uint64_t remaining = outstanding_.fetch_sub(1, std::memory_order_acq_rel) - 1;
 
     // Fast path: with nobody waiting there is no wakeup to deliver, so completion
     // never touches the completion mutex.
     //
     // The fence is load-bearing. Skipping the notification is safe only if this
-    // thread cannot read waiters_ == 0 while a waiter simultaneously fails to
-    // observe our completion. Publishing state and then reading waiters_ is a
-    // Store-Load pair - the one ordering x86 may reverse, and which ARM64
-    // reverses freely. This fence, paired with the seq_cst increment on the
-    // waiter's side, rules out the interleaving where both miss each other and
-    // the waiter never wakes.
+    // thread cannot read the waiter counts as zero while a waiter simultaneously
+    // fails to observe our completion. Publishing state and then reading those
+    // counters is a Store-Load pair - the one ordering x86 may reverse, and which
+    // ARM64 reverses freely. This fence, paired with the seq_cst increments on the
+    // waiters' side, rules out the interleaving where both miss each other and the
+    // waiter never wakes.
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    if (waiters_.load(std::memory_order_relaxed) == 0) {
+
+    const bool wake_handle_waiters = handle_waiters_.load(std::memory_order_relaxed) != 0;
+    // A wait_all() waiter cannot possibly be satisfied before the last task, so
+    // notifying it earlier is pure cost. This is the difference between O(1) and
+    // O(tasks) condition-variable wakeups per run.
+    const bool wake_all_waiters =
+        (remaining == 0) && (all_waiters_.load(std::memory_order_relaxed) != 0);
+
+    if (!wake_handle_waiters && !wake_all_waiters) {
         return;
     }
 
@@ -305,15 +328,29 @@ void RuntimeBase::wait(TaskHandle handle) {
     // worker_count as the number of threads executing tasks; a main thread that
     // also ran tasks would make "1 worker" mean two executors and inflate every
     // low-worker-count measurement in the scaling sweep.
-    waiters_.fetch_add(1, std::memory_order_seq_cst);
+    handle_waiters_.fetch_add(1, std::memory_order_seq_cst);
     {
         std::unique_lock lock(completion_mutex_);
         completion_cv_.wait(lock, [this, handle] { return is_complete_internal(handle); });
     }
-    waiters_.fetch_sub(1, std::memory_order_seq_cst);
+    handle_waiters_.fetch_sub(1, std::memory_order_seq_cst);
 }
 
 void RuntimeBase::wait_all() {
+    // Calling this from INSIDE a task can never return, and the failure is a hang
+    // rather than an error - the worst kind to debug.
+    //
+    // wait_all() waits for outstanding_ to reach zero, but the calling task is
+    // itself outstanding until it returns. So the count has a permanent floor of
+    // one and the help loop spins forever. There is no situation in which this is
+    // what the caller meant: waiting for a subtree is what handles and
+    // submit_after() are for. Found by writing a benchmark that did exactly this.
+#if THUNDERBOLT_DEBUG
+    assert(t_executing_depth == 0 &&
+           "wait_all() called from inside a running task never returns: the calling task is "
+           "itself outstanding. Wait on the child handles instead.");
+#endif
+
     // Note the scope: this waits for the runtime to be IDLE, not for "the work I
     // submitted". Tasks submitted by other threads after this call are included,
     // so a worker calling wait_all() can be held for as long as anyone keeps
@@ -336,13 +373,13 @@ void RuntimeBase::wait_all() {
         return;
     }
 
-    waiters_.fetch_add(1, std::memory_order_seq_cst);
+    all_waiters_.fetch_add(1, std::memory_order_seq_cst);
     {
         std::unique_lock lock(completion_mutex_);
         completion_cv_.wait(lock,
                             [this] { return outstanding_.load(std::memory_order_acquire) == 0; });
     }
-    waiters_.fetch_sub(1, std::memory_order_seq_cst);
+    all_waiters_.fetch_sub(1, std::memory_order_seq_cst);
 }
 
 } // namespace thunderbolt

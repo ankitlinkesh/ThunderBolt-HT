@@ -1,0 +1,285 @@
+#include "Experiments.hpp"
+
+#include "../harness/ResultWriter.hpp"
+#include "../workloads/Workloads.hpp"
+
+#include <thunderbolt/cpu/topology/CpuTopology.hpp>
+#include <thunderbolt/runtime/StandardRuntime.hpp>
+#include <thunderbolt/runtime/ThunderboltRuntime.hpp>
+
+#include <cstdio>
+#include <fstream>
+#include <memory>
+#include <sstream>
+#include <vector>
+
+namespace thunderbolt::bench {
+namespace {
+
+// Task counts to sweep. Log-spaced, spanning "fewer tasks than workers" (where
+// the limit is load imbalance) through "far more tasks than work" (where the
+// limit is scheduler overhead). The interesting answer lives at the crossover.
+const std::vector<std::size_t> kTaskCounts = {1,   2,   4,    8,    16,    64,
+                                              256, 1024, 4096, 16384, 65536};
+
+// Comfortably above the largest task count, so pool exhaustion never silently
+// converts the experiment into a measurement of inline execution. The inline
+// counter is reported anyway, so the assumption is checked rather than trusted.
+constexpr std::uint32_t kTaskCapacity = 262144;
+
+double run_one_sample(ITaskRuntime& runtime, ChunkedWorkload& workload, SubmissionMode mode) {
+    // Timed region contains submission and completion only. Runtime construction,
+    // allocation and result storage are all outside it.
+    if (mode == SubmissionMode::External) {
+        return time_seconds([&] {
+            const std::size_t chunks = workload.chunk_count();
+            for (std::size_t i = 0; i < chunks; ++i) {
+                (void)runtime.submit([&workload, i] { workload.run_chunk(i); });
+            }
+            runtime.wait_all();
+        });
+    }
+
+    // Fork-join: one root task spawns the rest. Its children go onto the root's
+    // own deque - no lock - and reach the other workers by being stolen. This is
+    // the path a frame graph takes, and the one where per-task cost is dispatch
+    // rather than contention on a single shared queue.
+    //
+    // The root waits on CHILD HANDLES, not wait_all(). wait_all() from inside a
+    // task can never return: the calling task is itself outstanding, so the count
+    // has a permanent floor of one. That mistake was made here first and now
+    // asserts in the runtime.
+    //
+    // The handle buffer is reserved OUTSIDE the timed region, so the measurement
+    // does not include a reallocation the runtime is not responsible for.
+    std::vector<TaskHandle> handles;
+    handles.reserve(workload.chunk_count());
+
+    return time_seconds([&] {
+        TaskHandle root = runtime.submit([&runtime, &workload, &handles](TaskContext&) {
+            const std::size_t chunks = workload.chunk_count();
+            handles.clear();
+            for (std::size_t i = 0; i < chunks; ++i) {
+                handles.push_back(runtime.submit([&workload, i] { workload.run_chunk(i); }));
+            }
+            for (TaskHandle handle : handles) {
+                runtime.wait(handle);  // helps rather than parking: we are on a worker
+            }
+        });
+        runtime.wait(root);
+    });
+}
+
+template <typename RuntimeT>
+Leg make_leg(std::string name, std::uint32_t workers, ChunkedWorkload& workload,
+             std::uint64_t& inline_executions, SubmissionMode mode) {
+    Leg leg;
+    leg.name = std::move(name);
+    leg.run_once = [workers, &workload, &inline_executions, mode] {
+        RuntimeConfig config;
+        config.worker_count  = workers;
+        config.task_capacity = kTaskCapacity;
+        // Large enough that a fork-join burst does not overflow into the global
+        // queue, which would quietly turn this back into the External case.
+        config.deque_capacity = 131072;
+
+        // A fresh runtime per sample. Reusing one across samples would let a
+        // previous sample's parked threads and warmed deques leak into the next,
+        // and keeping two runtimes alive so they could be alternated cheaply
+        // would leave the idle one's workers resident.
+        RuntimeT runtime(config);
+
+        const double seconds = run_one_sample(runtime, workload, mode);
+        inline_executions += runtime.inline_execution_count();
+        return seconds;
+    };
+    return leg;
+}
+
+// Serial reference for the workload-weight gate. If T1 is not comfortably larger
+// than the scheduler's own per-frame cost, the scene is too cheap to say anything
+// about scheduling and its speedup must not be reported.
+double measure_serial_baseline(std::uint64_t work_units) {
+    ChunkedWorkload workload(work_units, 1);
+    double best = 0.0;
+    for (int i = 0; i < 5; ++i) {
+        const double seconds = time_seconds([&] { workload.run_chunk(0); });
+        if (best == 0.0 || seconds < best) {
+            best = seconds;  // minimum: the least-disturbed observation
+        }
+    }
+    return best;
+}
+
+} // namespace
+
+int run_granularity(const ExperimentOptions& options) {
+    const CpuTopology& topology = cpu_topology();
+    const std::uint32_t workers =
+        (options.workers != 0)
+            ? options.workers
+            : (topology.logical_processor_count > 0 ? topology.logical_processor_count : 1u);
+
+    const Environment environment = capture_environment();
+    const char* mode_name =
+        (options.submission == SubmissionMode::ForkJoin) ? "fork-join" : "external";
+
+    std::printf("granularity: %llu work units, %u workers, %d reps\n",
+                static_cast<unsigned long long>(options.work_units), workers,
+                options.run.repetitions);
+
+    const double serial_seconds = measure_serial_baseline(options.work_units);
+    std::printf("serial baseline T1 = %.6f s\n\n", serial_seconds);
+
+    std::printf("%10s  %14s  %14s  %14s  %14s\n", "tasks", "standard (s)", "std IQR",
+                "thunderbolt(s)", "tb IQR");
+
+    std::ostringstream document;
+    JsonWriter         json(document);
+
+    RunReport last_report;  // for the shared header
+    bool      header_written = false;
+
+    std::vector<double> fit_x_standard, fit_y_standard;
+    std::vector<double> fit_x_thunderbolt, fit_y_thunderbolt;
+
+    struct Row {
+        std::size_t task_count;
+        RunReport   report;
+        std::uint64_t inline_standard    = 0;
+        std::uint64_t inline_thunderbolt = 0;
+    };
+    std::vector<Row> rows;
+
+    for (std::size_t task_count : kTaskCounts) {
+        ChunkedWorkload workload(options.work_units, task_count);
+
+        std::uint64_t inline_standard    = 0;
+        std::uint64_t inline_thunderbolt = 0;
+
+        std::vector<Leg> legs;
+        legs.push_back(make_leg<StandardRuntime>("standard", workers, workload, inline_standard,
+                                                 options.submission));
+        legs.push_back(make_leg<ThunderboltRuntime>("thunderbolt", workers, workload,
+                                                    inline_thunderbolt, options.submission));
+
+        RunReport report = run_interleaved(legs, options.run);
+
+        const double standard_median    = report.legs[0].timing.median;
+        const double thunderbolt_median = report.legs[1].timing.median;
+
+        std::printf("%10zu  %14.6f  %14.6f  %14.6f  %14.6f\n", task_count, standard_median,
+                    report.legs[0].timing.iqr, thunderbolt_median, report.legs[1].timing.iqr);
+
+        // Fit only where there are enough tasks to keep every worker busy. Below
+        // that, total time is dominated by load imbalance rather than by
+        // per-task cost, and including those points would bias the slope.
+        if (task_count >= static_cast<std::size_t>(workers) * 8) {
+            fit_x_standard.push_back(static_cast<double>(task_count));
+            fit_y_standard.push_back(standard_median);
+            fit_x_thunderbolt.push_back(static_cast<double>(task_count));
+            fit_y_thunderbolt.push_back(thunderbolt_median);
+        }
+
+        Row row;
+        row.task_count         = task_count;
+        row.report             = std::move(report);
+        row.inline_standard    = inline_standard;
+        row.inline_thunderbolt = inline_thunderbolt;
+        rows.push_back(std::move(row));
+
+        if (!header_written) {
+            last_report    = rows.back().report;
+            header_written = true;
+        }
+    }
+
+    const LinearFit fit_standard    = fit_linear(fit_x_standard, fit_y_standard);
+    const LinearFit fit_thunderbolt = fit_linear(fit_x_thunderbolt, fit_y_thunderbolt);
+
+    std::printf("\nper-task scheduler cost (slope of total time vs task count):\n");
+    if (fit_standard.valid) {
+        std::printf("  standard    : %8.1f ns/task   (R^2 = %.3f)\n",
+                    fit_standard.slope * 1e9, fit_standard.r_squared);
+    }
+    if (fit_thunderbolt.valid) {
+        std::printf("  thunderbolt : %8.1f ns/task   (R^2 = %.3f)\n",
+                    fit_thunderbolt.slope * 1e9, fit_thunderbolt.r_squared);
+    }
+    std::printf("\nA low R^2 means the linear-overhead model does not describe the data,\n"
+                "and the slope must not be quoted as a per-task cost.\n");
+
+    // ---- results document ------------------------------------------------
+    begin_result_document(json, "granularity", environment, last_report);
+
+    json.field("workers", static_cast<std::uint64_t>(workers));
+    json.field("work_units", options.work_units);
+    // Recorded because it determines WHICH cost is being measured - dispatch, or
+    // contention on the shared injection queue.
+    json.field("submission_mode", mode_name);
+
+    json.begin_object("serial_baseline");
+    json.field("t1_seconds", serial_seconds);
+    // The gate: a workload this cheap cannot say anything about scheduling.
+    json.field("cpu_bound_gate_passed", serial_seconds > 0.001);
+    json.field("gate_note",
+               "T1 must be comfortably above per-frame scheduler cost, or the configuration "
+               "measures noise rather than scheduling.");
+    json.end_object();
+
+    json.begin_array("rows");
+    for (const Row& row : rows) {
+        json.begin_object();
+        json.field("task_count", static_cast<std::uint64_t>(row.task_count));
+        json.field("units_per_task",
+                   static_cast<std::uint64_t>(options.work_units / row.task_count));
+
+        json.begin_array("legs");
+        for (const LegResult& leg : row.report.legs) {
+            write_leg(json, leg, /*include_samples=*/false);
+        }
+        json.end_array();
+
+        // Non-zero here means the pool ran dry and some tasks executed inline,
+        // reducing parallelism. Reported so the row can be discounted rather
+        // than silently believed.
+        json.field("inline_executions_standard", row.inline_standard);
+        json.field("inline_executions_thunderbolt", row.inline_thunderbolt);
+        json.end_object();
+    }
+    json.end_array();
+
+    json.begin_object("analysis");
+    json.begin_object("per_task_overhead_ns");
+    if (fit_standard.valid) {
+        json.field("standard", fit_standard.slope * 1e9);
+        json.field("standard_r_squared", fit_standard.r_squared);
+    }
+    if (fit_thunderbolt.valid) {
+        json.field("thunderbolt", fit_thunderbolt.slope * 1e9);
+        json.field("thunderbolt_r_squared", fit_thunderbolt.r_squared);
+    }
+    json.end_object();
+    json.field("method",
+               "Total work is held constant while the task count varies, so the slope of total "
+               "time against task count is the marginal cost of one task. Fitted only over task "
+               "counts of at least 8x the worker count, below which load imbalance dominates.");
+    json.end_object();
+
+    json.end_object();
+
+    const std::string text = document.str();
+    if (!options.output_path.empty()) {
+        std::ofstream file(options.output_path);
+        if (!file) {
+            std::fprintf(stderr, "error: cannot write %s\n", options.output_path.c_str());
+            return 1;
+        }
+        file << text << "\n";
+        std::printf("\nwrote %s\n", options.output_path.c_str());
+    }
+
+    return 0;
+}
+
+} // namespace thunderbolt::bench

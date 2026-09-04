@@ -64,6 +64,17 @@ public:
         return dependencies_pre_satisfied_.load(std::memory_order_relaxed);
     }
 
+    // Task-pool free-list statistics. Exposed because the pool mutex is taken
+    // twice per task and is a prime suspect whenever per-task cost looks too
+    // high - and a suspect should be checked against a counter, not reasoned
+    // about.
+    [[nodiscard]] std::uint64_t pool_acquire_count() const noexcept {
+        return pool_.acquire_count();
+    }
+    [[nodiscard]] std::uint64_t pool_contended_lock_count() const noexcept {
+        return pool_.contended_lock_count();
+    }
+
 protected:
     explicit RuntimeBase(RuntimeConfig config);
     ~RuntimeBase() override = default;
@@ -113,10 +124,21 @@ private:
     mutable std::mutex      completion_mutex_;
     std::condition_variable completion_cv_;
 
-    // Threads currently blocked in wait()/wait_all(). Lets the completion path
-    // skip the mutex entirely when nobody is listening, which is almost every
-    // completion under load.
-    std::atomic<std::uint32_t> waiters_{0};
+    // Waiters are counted SEPARATELY by what they are waiting for, and the
+    // distinction is worth several microseconds per task.
+    //
+    // A single counter meant that one thread sitting in wait_all() made every
+    // completion take the mutex and call notify_all() - waking that thread once
+    // per task to re-check a predicate that stays false until the very last one.
+    // Measured at 65536 tasks, that turned a ~200 ns dispatch into ~5 us and made
+    // the runtime 20x slower than running the work serially.
+    //
+    // A wait_all() waiter can only be satisfied when outstanding_ reaches zero, so
+    // it is notified then and not before. Per-handle waiters still need a
+    // notification per completion, but that path is rare: inside a worker,
+    // wait(handle) helps rather than blocking, and never touches this at all.
+    std::atomic<std::uint32_t> handle_waiters_{0};
+    std::atomic<std::uint32_t> all_waiters_{0};
 
     std::atomic<std::uint64_t> outstanding_{0};
     std::atomic<std::uint64_t> completed_{0};

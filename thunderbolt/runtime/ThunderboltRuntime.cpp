@@ -37,10 +37,10 @@ inline std::uint64_t xorshift64(std::uint64_t& state) {
 ThunderboltRuntime::ThunderboltRuntime(RuntimeConfig config) : RuntimeBase(config) {
     worker_count_ = resolve_worker_count(config);
 
-    // Deque capacity is per worker per priority. Overflow is handled (it spills
-    // to the global queue and is counted), so this is a tuning parameter rather
-    // than a correctness limit.
-    const std::size_t per_queue_capacity = 1024;
+    // Per worker, per priority. Overflow is handled - it spills to the global
+    // queue and is counted - so this is a tuning parameter, not a correctness
+    // limit.
+    const std::size_t per_queue_capacity = (config.deque_capacity > 0) ? config.deque_capacity : 1024;
 
     workers_.reserve(worker_count_);
     for (std::uint32_t i = 0; i < worker_count_; ++i) {

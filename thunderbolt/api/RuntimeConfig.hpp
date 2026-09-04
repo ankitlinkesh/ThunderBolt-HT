@@ -35,6 +35,15 @@ struct RuntimeConfig {
     // execution and is counted, rather than failing or silently allocating.
     std::uint32_t task_capacity = 65536;
 
+    // Per-worker, per-priority work-stealing deque capacity.
+    //
+    // Matters for fork-join bursts: a task that spawns thousands of children puts
+    // them all on ITS OWN deque before any are stolen, and overflow spills to the
+    // global queue - which is exactly the contended path the deques exist to
+    // avoid. Overflow is counted, so a capacity set too low is visible rather
+    // than silently changing what the benchmark measures.
+    std::uint32_t deque_capacity = 4096;
+
     // Off by default (S17). Lives here rather than on one runtime so that it
     // stays constant across an A/B comparison instead of being one runtime's
     // private advantage.

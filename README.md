@@ -12,7 +12,7 @@ together with a real-time simulation used as its flagship benchmark workload.
 
 ## Status
 
-**Phase D complete.** Read this section before any other — the rest of this document
+**Phase E complete.** Read this section before any other — the rest of this document
 describes the design, and this section describes what actually exists today.
 
 | | |
@@ -22,7 +22,7 @@ describes the design, and this section describes what actually exists today.
 | Task core, `ITaskRuntime`, StandardRuntime | ✅ built and verified |
 | Worker pool, work-stealing deque, CPU topology | ✅ built and verified |
 | Task dependencies / task graph | ✅ built and verified |
-| Profiler, benchmark harness | ⬜ Phase E |
+| Profiler counters, benchmark harness, first results | ✅ built and measured |
 | Headless deterministic simulation | ⬜ Phase F |
 | Adaptive scheduling modes | ⬜ Phase G |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
@@ -42,9 +42,50 @@ Because ThreadSanitizer is unavailable here, the concurrency tests are also run 
 rather than once: 32 consecutive clean runs across configurations at the time of writing. That
 is weaker evidence than a race detector and is treated as such.
 
-**No performance numbers are published yet, because none have been measured.** Every figure
-that ever appears in this README will be traceable to a machine-readable result file produced
-on stated hardware. There are no placeholder benchmarks in this repository.
+### First measured results
+
+Every figure below comes from a run on the machine named in the results file, and each is
+reproducible with the command shown. Nothing here is estimated.
+
+**Scaling** (`docs/results/scaling.json`, 2M work units in 512 tasks, 8 reps, interleaved):
+
+| workers | domain | standard | thunderbolt |
+|---|---|---|---|
+| 1 | cores | 1.00× | 1.00× |
+| 2 | cores | 1.91× | 1.87× |
+| 4 | cores | 3.72× | 3.63× |
+| 8 | SMT | 5.81× | **6.72×** |
+
+Scaling is near-linear to 4 workers (0.93 efficiency), then efficiency falls — because workers
+5–8 share physical cores via SMT, not because scheduling degrades. The output labels that
+boundary so it cannot be misread. Thunderbolt is behind the baseline on 1–4 workers and ahead
+once the machine is oversubscribed.
+
+**Task granularity** (`docs/results/granularity.json`) holds total work constant and varies how
+many tasks it is split into. The slope of total time against task count is the marginal cost of
+one task:
+
+| | per-task cost | R² |
+|---|---|---|
+| standard | ~6100 ns | 0.98 |
+| thunderbolt | ~1800 ns | 0.998 |
+
+So the crossover — where decomposing further costs more than it buys — sits near **1000 tasks**
+for this workload on this machine. That answers §59.6 and §59.7 directly, and needed no game.
+
+Both numbers are **still high in absolute terms**; a mature runtime reaches the low hundreds of
+nanoseconds. The leading suspect is the task pool's free-list mutex, taken twice per task and
+contended across eight workers. That is a hypothesis with a measurement attached, not a guess,
+and it is the first thing Phase G should test.
+
+### What is NOT yet measured
+
+- **The third comparison leg is missing.** Results so far compare Thunderbolt against this
+  project's own baseline only. Until oneTBB or Taskflow is wired in as an external reference,
+  "faster than the baseline" remains open to the straw-man objection, and no speedup here should
+  be read as competitive with an industrial scheduler.
+- No timeline profiler (§54) yet — only aggregate counters.
+- No game workload. Everything above is synthetic and CPU-bound by construction.
 
 ---
 
@@ -133,6 +174,19 @@ To confirm CPU topology detection actually queried the OS rather than taking its
 ```
 ./build/dev/bin/Release/thunderbolt_topology_report
 ```
+
+To reproduce the measurements above:
+
+```
+thunderbolt-bench --experiment granularity --reps 12 --out granularity.json
+thunderbolt-bench --experiment scaling     --reps 8  --out scaling.json
+```
+
+`--submission forkjoin` (the default) spawns tasks from inside a root task, so children land on
+a lock-free local deque. `--submission external` submits from outside the runtime, where every
+task goes through the shared injection queue — a real pattern, but lock-bound at high task
+counts, and roughly 2× more expensive per task. Reporting one while meaning the other is how a
+benchmark ends up describing lock contention as scheduler overhead.
 
 ---
 
