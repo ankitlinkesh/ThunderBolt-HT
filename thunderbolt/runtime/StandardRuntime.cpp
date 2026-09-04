@@ -57,23 +57,7 @@ bool StandardRuntime::on_own_worker(std::uint32_t& out_index) const {
     return false;
 }
 
-TaskHandle StandardRuntime::submit(TaskDesc desc) {
-    const TaskPriority priority = desc.priority;
-
-    TaskHandle handle = acquire_task(std::move(desc));
-
-    if (!handle.valid()) {
-        // Pool exhausted. Degrade to inline execution rather than failing or
-        // reaching for the allocator: the work still happens and stays correct,
-        // only the parallelism suffers, and the counter makes that visible.
-        run_inline(std::move(desc));
-        return TaskHandle{};
-    }
-
-    Task* task = pool().get(handle);
-    assert(task != nullptr);
-    task->state.store(TaskState::Queued, std::memory_order_release);
-
+void StandardRuntime::enqueue_ready(TaskHandle handle, TaskPriority priority) {
     {
         std::lock_guard lock(queue_mutex_);
         ready_[static_cast<std::size_t>(priority)].push_back(handle);
@@ -83,8 +67,6 @@ TaskHandle StandardRuntime::submit(TaskDesc desc) {
     // thundering herd that contends on the queue lock and goes straight back to
     // sleep.
     queue_cv_.notify_one();
-
-    return handle;
 }
 
 TaskHandle StandardRuntime::pop_locked() {

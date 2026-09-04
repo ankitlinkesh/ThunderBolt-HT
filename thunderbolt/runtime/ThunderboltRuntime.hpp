@@ -45,10 +45,6 @@ public:
     explicit ThunderboltRuntime(RuntimeConfig config = {});
     ~ThunderboltRuntime() override;
 
-    using ITaskRuntime::submit;
-
-    [[nodiscard]] TaskHandle submit(TaskDesc desc) override;
-
     [[nodiscard]] std::uint32_t    worker_count() const noexcept override { return worker_count_; }
     [[nodiscard]] std::string_view name() const noexcept override { return "thunderbolt"; }
 
@@ -61,6 +57,11 @@ public:
     }
 
 protected:
+    // The only scheduling decision this runtime owns: a ready task goes on the
+    // submitting worker's own deque when there is one, and on the global
+    // injection queue otherwise.
+    void enqueue_ready(TaskHandle handle, TaskPriority priority) override;
+
     bool               try_execute_one(TaskContext& ctx) override;
     [[nodiscard]] bool on_own_worker(std::uint32_t& out_index) const override;
 

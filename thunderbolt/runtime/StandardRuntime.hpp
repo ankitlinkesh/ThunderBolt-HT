@@ -30,12 +30,6 @@ public:
     explicit StandardRuntime(RuntimeConfig config = {});
     ~StandardRuntime() override;
 
-    // Bring the submit(callable) convenience overload back into scope; declaring
-    // submit(TaskDesc) below would otherwise hide it.
-    using ITaskRuntime::submit;
-
-    [[nodiscard]] TaskHandle submit(TaskDesc desc) override;
-
     [[nodiscard]] std::uint32_t    worker_count() const noexcept override { return worker_count_; }
     [[nodiscard]] std::string_view name() const noexcept override { return "standard"; }
 
@@ -46,6 +40,10 @@ public:
     }
 
 protected:
+    // The only scheduling decision this runtime owns: a ready task goes on the
+    // FIFO for its priority, and one parked worker is woken.
+    void enqueue_ready(TaskHandle handle, TaskPriority priority) override;
+
     bool               try_execute_one(TaskContext& ctx) override;
     [[nodiscard]] bool on_own_worker(std::uint32_t& out_index) const override;
 

@@ -87,27 +87,15 @@ bool ThunderboltRuntime::on_own_worker(std::uint32_t& out_index) const {
     return false;
 }
 
-TaskHandle ThunderboltRuntime::submit(TaskDesc desc) {
-    const TaskPriority priority = desc.priority;
-
-    TaskHandle handle = acquire_task(std::move(desc));
-    if (!handle.valid()) {
-        run_inline(std::move(desc));
-        return TaskHandle{};
-    }
-
-    Task* task = pool().get(handle);
-    assert(task != nullptr);
-    task->state.store(TaskState::Queued, std::memory_order_release);
-
+void ThunderboltRuntime::enqueue_ready(TaskHandle handle, TaskPriority priority) {
     std::uint32_t worker_index = TaskContext::kExternalThread;
     bool          queued_local = false;
 
     if (on_own_worker(worker_index)) {
-        // Submitted from inside a task: push onto the submitting worker's own
-        // deque. This is the locality that makes work stealing worth having -
-        // a task's children stay on the core that produced them, and are only
-        // pulled away when another worker would otherwise sit idle.
+        // Queued from inside a task: push onto the submitting worker's own deque.
+        // This is the locality that makes work stealing worth having - a task's
+        // children stay on the core that produced them, and only migrate when
+        // another worker would otherwise sit idle.
         WorkerState& worker = *workers_[worker_index];
         queued_local = worker.queues[static_cast<std::size_t>(priority)]->push(handle);
 
@@ -127,7 +115,6 @@ TaskHandle ThunderboltRuntime::submit(TaskDesc desc) {
     }
 
     wake_one_worker();
-    return handle;
 }
 
 void ThunderboltRuntime::wake_one_worker() {

@@ -12,6 +12,8 @@ add_executable(thunderbolt_tests
     test_abp_deque.cpp
     test_cpu_topology.cpp
     test_runtime_conformance.cpp
+    test_dependency_conformance.cpp
+    test_task_graph.cpp
     test_thunderbolt_runtime.cpp
 )
 

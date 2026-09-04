@@ -25,6 +25,7 @@ set(THUNDERBOLT_VERSION_STRING "0.1.0")
 
 add_library(thunderbolt STATIC
     core/task/TaskPool.cpp
+    core/taskgraph/TaskGraph.cpp
     cpu/affinity/Affinity.cpp
     cpu/topology/CpuTopology.cpp
     runtime/BuildInfo.cpp

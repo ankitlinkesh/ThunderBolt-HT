@@ -12,7 +12,7 @@ together with a real-time simulation used as its flagship benchmark workload.
 
 ## Status
 
-**Phase C complete.** Read this section before any other — the rest of this document
+**Phase D complete.** Read this section before any other — the rest of this document
 describes the design, and this section describes what actually exists today.
 
 | | |
@@ -21,21 +21,26 @@ describes the design, and this section describes what actually exists today.
 | Architectural guard tests (layering, standalone build) | ✅ built and verified |
 | Task core, `ITaskRuntime`, StandardRuntime | ✅ built and verified |
 | Worker pool, work-stealing deque, CPU topology | ✅ built and verified |
-| Task dependencies / task graph | ⬜ Phase D |
+| Task dependencies / task graph | ✅ built and verified |
 | Profiler, benchmark harness | ⬜ Phase E |
 | Headless deterministic simulation | ⬜ Phase F |
 | Adaptive scheduling modes | ⬜ Phase G |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
-76 unit tests pass under Debug, Release and AddressSanitizer. **17 of them are a single
-conformance suite run against *both* runtimes** — that is the structural guarantee behind the
-A/B methodology: if StandardRuntime and ThunderboltRuntime ever disagree about what the task
-API means, the build fails rather than the disagreement being measured later and reported as a
+105 unit tests pass under Debug, Release and AddressSanitizer. **28 of them are conformance
+suites run against *both* runtimes** — that is the structural guarantee behind the A/B
+methodology: if StandardRuntime and ThunderboltRuntime ever disagree about what the task API
+means, the build fails rather than the disagreement being measured later and reported as a
 scheduling result.
 
+The dependency tests were checked by mutation, not just by passing: deliberately making
+`submit_after` ignore its dependencies fails 15 of them, symmetrically across both runtimes.
+One test survived that mutation initially — its tasks were too cheap for ordering to matter —
+and was strengthened until it did not.
+
 Because ThreadSanitizer is unavailable here, the concurrency tests are also run repeatedly
-rather than once: 60 consecutive clean runs across the three configurations at the time of
-writing. That is weaker evidence than a race detector and is treated as such.
+rather than once: 32 consecutive clean runs across configurations at the time of writing. That
+is weaker evidence than a race detector and is treated as such.
 
 **No performance numbers are published yet, because none have been measured.** Every figure
 that ever appears in this README will be traceable to a machine-readable result file produced

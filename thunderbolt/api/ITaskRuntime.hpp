@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -37,6 +38,22 @@ public:
     // Submits a task for execution. The returned handle may be waited on.
     // Thread-safe, and callable from inside a running task.
     [[nodiscard]] virtual TaskHandle submit(TaskDesc desc) = 0;
+
+    // Submits a task that becomes runnable only once every handle in
+    // `dependencies` has completed (S8).
+    //
+    // Dependencies are declared HERE, at submission, and can never be added
+    // afterwards. That restriction is what makes a dependency cycle impossible to
+    // express in the live runtime rather than merely detected in it: a task can
+    // only depend on handles that already exist, and its own handle does not
+    // exist until this call returns. S62 asks for cycle detection; being unable
+    // to build one is the stronger property. (TaskGraph, which does allow edges
+    // between existing nodes, checks for cycles explicitly - see taskgraph/.)
+    //
+    // Handles that have already completed - including stale ones - count as
+    // satisfied, so passing them is harmless rather than a hang.
+    [[nodiscard]] virtual TaskHandle submit_after(TaskDesc desc, const TaskHandle* dependencies,
+                                                  std::size_t dependency_count) = 0;
 
     // Blocks until the referenced task has completed.
     //
@@ -74,6 +91,20 @@ public:
         requires(!std::is_same_v<std::decay_t<F>, TaskDesc>)
     [[nodiscard]] TaskHandle submit(F&& fn, TaskPriority priority = TaskPriority::Normal) {
         return submit(TaskDesc{TaskFunction{std::forward<F>(fn)}, priority});
+    }
+
+    // Convenience: submit a callable that runs after the listed dependencies.
+    template <typename F>
+        requires(!std::is_same_v<std::decay_t<F>, TaskDesc>)
+    [[nodiscard]] TaskHandle submit_after(std::initializer_list<TaskHandle> dependencies, F&& fn,
+                                          TaskPriority priority = TaskPriority::Normal) {
+        return submit_after(TaskDesc{TaskFunction{std::forward<F>(fn)}, priority},
+                            dependencies.begin(), dependencies.size());
+    }
+
+    [[nodiscard]] TaskHandle submit_after(const std::vector<TaskHandle>& dependencies,
+                                          TaskDesc                       desc) {
+        return submit_after(std::move(desc), dependencies.data(), dependencies.size());
     }
 
     // Executes body(begin_i, end_i) over [begin, end) in batches of at most

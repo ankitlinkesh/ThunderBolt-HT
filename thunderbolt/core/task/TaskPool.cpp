@@ -50,6 +50,7 @@ TaskHandle TaskPool::acquire(TaskDesc&& desc) {
     task.priority       = desc.priority;
     task.flags          = desc.flags;
     task.estimated_cost = desc.estimated_cost;
+    task.pending_dependencies.store(0, std::memory_order_relaxed);
 
     const std::uint32_t generation = task.generation.load(std::memory_order_relaxed);
 
@@ -72,6 +73,12 @@ void TaskPool::release(TaskHandle handle) {
     // is released at a predictable point rather than whenever the slot happens to
     // be handed out again.
     task.function.reset();
+
+    // The successor list must already have been closed and drained by the
+    // completing thread; this returns it to a reusable state. Doing it here
+    // rather than at acquire keeps a released slot from holding handles to tasks
+    // that have themselves been recycled.
+    task.reset_successors();
 
     // Advancing the generation is what invalidates every outstanding handle.
     // It must happen BEFORE the slot goes back on the free list: once it is on
