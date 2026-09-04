@@ -1,0 +1,83 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "msvc",
+      "hidden": true,
+      "inherits": "base",
+      "description": "MSVC toolset pinned. S87 records the compiler in every result, and two toolsets are installed on the reference machine - leaving the choice implicit would make results ambiguous.",
+      "generator": "Visual Studio 18 2026",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "toolset": { "value": "version=14.51", "strategy": "set" }
+    },
+
+    {
+      "name": "dev",
+      "inherits": "msvc",
+      "displayName": "Dev (multi-config: Debug/Release/RelWithDebInfo)",
+      "description": "Everyday build. Debug enables THUNDERBOLT_DEBUG assertions (S62)."
+    },
+
+    {
+      "name": "asan",
+      "inherits": "msvc",
+      "displayName": "AddressSanitizer",
+      "description": "ASan finds memory errors, NOT data races - it does not substitute for ThreadSanitizer, which is unavailable on MSVC. Based on RelWithDebInfo because /fsanitize=address is incompatible with the /RTC1 that Debug enables by default.",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "/fsanitize=address",
+        "CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO": "/DEBUG /INCREMENTAL:NO",
+        "CMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO": "/DEBUG /INCREMENTAL:NO"
+      }
+    },
+
+    {
+      "name": "ninja",
+      "inherits": "base",
+      "displayName": "Ninja RelWithDebInfo (requires a Developer Command Prompt)",
+      "description": "Faster iteration and the preferred configuration for benchmarking. Ninja+MSVC needs INCLUDE/LIB from vcvars64.bat, which CMake does not set up itself - so this preset only works from a developer shell. Ninja ships inside VS at Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/.",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    { "name": "dev-debug",   "configurePreset": "dev",   "configuration": "Debug" },
+    { "name": "dev-release", "configurePreset": "dev",   "configuration": "Release" },
+    { "name": "dev-relwithdebinfo", "configurePreset": "dev", "configuration": "RelWithDebInfo" },
+    { "name": "asan",        "configurePreset": "asan",  "configuration": "RelWithDebInfo" },
+    { "name": "ninja",       "configurePreset": "ninja" }
+  ],
+
+  "testPresets": [
+    {
+      "name": "dev-debug",
+      "configurePreset": "dev",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "dev-release",
+      "configurePreset": "dev",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "configuration": "RelWithDebInfo",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

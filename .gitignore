@@ -1,0 +1,29 @@
+# Build output
+build/
+out/
+cmake-build-*/
+
+# CMake
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.sln.docstates
+
+# Build artefacts
+*.obj
+*.lib
+*.exe
+*.pdb
+*.ilk
+*.idb
+*.exp
+
+# Benchmark results are reproducible artefacts, not source. Results that back a
+# published claim belong under docs/results/ and are committed deliberately.
+benchmark-output/
+*.tmp
