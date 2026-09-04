@@ -14,6 +14,7 @@ add_executable(thunderbolt_tests
     test_runtime_conformance.cpp
     test_dependency_conformance.cpp
     test_task_graph.cpp
+    test_json_writer.cpp
     test_thunderbolt_runtime.cpp
 )
 

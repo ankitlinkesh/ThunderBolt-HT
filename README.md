@@ -47,45 +47,55 @@ is weaker evidence than a race detector and is treated as such.
 Every figure below comes from a run on the machine named in the results file, and each is
 reproducible with the command shown. Nothing here is estimated.
 
-**Scaling** (`docs/results/scaling.json`, 2M work units in 512 tasks, 8 reps, interleaved):
+**Compared against an external reference.** Taskflow v3.7.0 is linked into the benchmark target
+only — never into `thunderbolt/` — and run two ways, because handing it explicit tasks compares
+like with like while its native `for_each` partitions the range itself and is its best case.
+Reporting only the first would make it look bad for reasons unrelated to scheduling quality.
 
-| workers | domain | standard | thunderbolt |
-|---|---|---|---|
-| 1 | cores | 1.00× | 1.00× |
-| 2 | cores | 1.91× | 1.87× |
-| 4 | cores | 3.72× | 3.63× |
-| 8 | SMT | 5.81× | **6.72×** |
+Total time for a fixed 2M-unit workload split into 65 536 tasks:
 
-Scaling is near-linear to 4 workers (0.93 efficiency), then efficiency falls — because workers
-5–8 share physical cores via SMT, not because scheduling degrades. The output labels that
-boundary so it cannot be misread. Thunderbolt is behind the baseline on 1–4 workers and ahead
-once the machine is oversubscribed.
-
-**Task granularity** (`docs/results/granularity.json`) holds total work constant and varies how
-many tasks it is split into. The slope of total time against task count is the marginal cost of
-one task:
-
-| | per-task cost | R² |
+| leg | time | relative |
 |---|---|---|
-| standard | ~6100 ns | 0.98 |
-| thunderbolt | ~1800 ns | 0.998 |
+| standard (this project's baseline) | 0.307 s | 1.0× |
+| **thunderbolt** | **0.118 s** | 2.6× |
+| taskflow, explicit tasks | 0.045 s | 6.8× |
+| taskflow, native `for_each` | 0.005 s | 61× |
 
-So the crossover — where decomposing further costs more than it buys — sits near **1000 tasks**
-for this workload on this machine. That answers §59.6 and §59.7 directly, and needed no game.
+**Thunderbolt is roughly 4× slower per task than an industrial scheduler on a like-for-like
+comparison.** That is the honest headline, and it is exactly why the external leg was added:
+"beats my own baseline" was true and nearly meaningless.
 
-Both numbers are **still high in absolute terms**; a mature runtime reaches the low hundreds of
-nanoseconds. The leading suspect is the task pool's free-list mutex, taken twice per task and
-contended across eight workers. That is a hypothesis with a measurement attached, not a guess,
-and it is the first thing Phase G should test.
+**Task granularity** (`docs/results/granularity.json`): per-task cost, recovered as the slope of
+total time against task count with total work held constant, is ~4700 ns for the baseline and
+~1750 ns for Thunderbolt (R² 0.99). The crossover — where decomposing further costs more than it
+buys — sits near **1000 tasks** for this workload. That answers §59.6 and §59.7, and needed no
+game.
 
-### What is NOT yet measured
+**Scaling** (`docs/results/scaling.json`): near-linear to 4 physical cores, with efficiency
+falling across workers 5–8 because those share cores via SMT — the output labels that boundary
+so it is not misread as a scheduling defect. *Caveat:* some runs show efficiency slightly above
+1.0 at 3–5 workers. That is not real superlinear scaling; it reflects turbo behaviour and a
+shrinking per-core working set, and it is reported rather than smoothed away.
 
-- **The third comparison leg is missing.** Results so far compare Thunderbolt against this
-  project's own baseline only. Until oneTBB or Taskflow is wired in as an external reference,
-  "faster than the baseline" remains open to the straw-man objection, and no speedup here should
-  be read as competitive with an industrial scheduler.
+### A hypothesis that was tested and disproved
+
+The task pool's free-list mutex was the standing explanation for high per-task cost — it is taken
+twice per task, and instrumentation showed **52.8% of acquisitions contended** at 65 536 tasks.
+
+Sharding the free list across 16 independent sublists reduced contention to **1.3%** and changed
+the measured per-task cost **not at all** (~1750 ns before and after). The contention was real
+but not causal: it was a symptom of workers being serialised somewhere else, not the cause.
+
+The sharding was kept — it is strictly better and costs nothing — but it is recorded here as a
+negative result rather than presented as an optimisation. The next candidate is memory
+footprint: `sizeof(Task)` is 192 bytes, so a 65 536-task live set spans ~12 MB against roughly
+6 MB of last-level cache. That is a hypothesis, not a finding.
+
+### What is still NOT measured
+
 - No timeline profiler (§54) yet — only aggregate counters.
 - No game workload. Everything above is synthetic and CPU-bound by construction.
+- oneTBB has not been added; the external reference is Taskflow alone.
 
 ---
 
@@ -110,7 +120,7 @@ per-worker work-stealing queues. It is a systems project usable entirely on its 
 Threads map poorly onto game-shaped workloads: the parallelism is irregular, its width changes
 every frame, and the dependencies between systems are real. Fixed thread-per-system designs
 leave cores idle whenever the frame is not perfectly balanced. Expressing the frame as a task
-graph lets the runtime run whatever is legal to run, whenever a core is free — and makes the
+graph lets the runtime run whatever is legal to run, whenever a core is free â€” and makes the
 *granularity* of that decomposition a measurable, tunable quantity rather than an architectural
 commitment.
 
@@ -137,7 +147,7 @@ commitment.
 
 The dependency arrow points one way only. Application code depends on `ITaskRuntime` and never
 on runtime internals; `thunderbolt/` never depends on `engine/` or `game/`. Both rules are
-enforced by tests (`architecture_layering`, `thunderbolt_builds_standalone`), not by convention —
+enforced by tests (`architecture_layering`, `thunderbolt_builds_standalone`), not by convention â€”
 so the same workload can run under either runtime with no application change, which is what
 makes A/B comparison meaningful at all.
 
@@ -159,8 +169,11 @@ Configurations:
 | Preset | Purpose |
 |---|---|
 | `dev` | Debug / Release / RelWithDebInfo. Debug enables `THUNDERBOLT_DEBUG` assertions. |
-| `asan` | AddressSanitizer. **Finds memory errors, not data races** — see Limitations. |
+| `asan` | AddressSanitizer. **Finds memory errors, not data races** â€” see Limitations. |
 | `ninja` | Faster iteration; requires a Developer Command Prompt for `INCLUDE`/`LIB`. |
+
+Add `-DTHUNDERBOLT_REFERENCE_RUNTIMES=ON` at configure time to fetch Taskflow and include the
+external comparison legs. It is off by default: a core build must never require the network.
 
 To verify the runtime really is independent of the simulation:
 
@@ -169,7 +182,7 @@ cmake -S thunderbolt -B build/standalone
 ```
 
 To confirm CPU topology detection actually queried the OS rather than taking its fallback path
-— the unit tests tolerate the fallback, so this is the check a human runs on real hardware:
+â€” the unit tests tolerate the fallback, so this is the check a human runs on real hardware:
 
 ```
 ./build/dev/bin/Release/thunderbolt_topology_report
@@ -184,8 +197,8 @@ thunderbolt-bench --experiment scaling     --reps 8  --out scaling.json
 
 `--submission forkjoin` (the default) spawns tasks from inside a root task, so children land on
 a lock-free local deque. `--submission external` submits from outside the runtime, where every
-task goes through the shared injection queue — a real pattern, but lock-bound at high task
-counts, and roughly 2× more expensive per task. Reporting one while meaning the other is how a
+task goes through the shared injection queue â€” a real pattern, but lock-bound at high task
+counts, and roughly 2Ã— more expensive per task. Reporting one while meaning the other is how a
 benchmark ends up describing lock contention as scheduler overhead.
 
 ---
@@ -203,7 +216,7 @@ no window and a seeded RNG. Rendering, when it exists, is visualization and sits
 measured path.
 
 **2. Three comparison legs, not two.** StandardRuntime is a *competent* baseline, not a straw
-man — but "it beat my own baseline" is a weak claim, so results are also compared against an
+man â€” but "it beat my own baseline" is a weak claim, so results are also compared against an
 established industrial runtime (oneTBB / Taskflow), linked into the benchmark target only and
 never into the runtime core.
 
@@ -215,7 +228,7 @@ runs are visible instead of silently averaged in.
 
 Determinism is used as the correctness proof: the simulation hashes its full world state, and
 that hash must be **bit-identical** across runtimes and across worker counts. This catches
-scheduler races that stress tests miss — which matters here, because ThreadSanitizer is not
+scheduler races that stress tests miss â€” which matters here, because ThreadSanitizer is not
 available on this toolchain.
 
 ---
@@ -242,7 +255,7 @@ Stated plainly, because they bound what this project can currently claim.
 Committed: task core and baseline runtime, then worker pool and work stealing, dependencies,
 profiler and benchmark harness, headless simulation, adaptive scheduling modes, results.
 
-Beyond that — renderer, streamed world, vehicles, aircraft, weather — is a genuine multi-year
+Beyond that â€” renderer, streamed world, vehicles, aircraft, weather â€” is a genuine multi-year
 scope and is treated as a roadmap rather than a backlog. Scheduling claims will continue to come
 from the headless path regardless of how far the visual side progresses.
 
@@ -250,7 +263,7 @@ from the headless path regardless of how far the visual side progresses.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT â€” see [LICENSE](LICENSE).
 
 No third-party game assets, vehicle brands, or aircraft trademarks are used. Any vehicles or
 aircraft are fictional and original.

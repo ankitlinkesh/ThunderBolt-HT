@@ -3,6 +3,7 @@
 #include "../harness/ResultWriter.hpp"
 #include "../workloads/Workloads.hpp"
 
+#include <thunderbolt/core/task/Task.hpp>
 #include <thunderbolt/cpu/topology/CpuTopology.hpp>
 #include <thunderbolt/runtime/StandardRuntime.hpp>
 #include <thunderbolt/runtime/ThunderboltRuntime.hpp>
@@ -12,6 +13,11 @@
 #include <memory>
 #include <sstream>
 #include <vector>
+
+#if THUNDERBOLT_HAVE_TASKFLOW
+#  include <taskflow/taskflow.hpp>
+#  include <taskflow/algorithm/for_each.hpp>
+#endif
 
 namespace thunderbolt::bench {
 namespace {
@@ -70,12 +76,20 @@ double run_one_sample(ITaskRuntime& runtime, ChunkedWorkload& workload, Submissi
     });
 }
 
+// Pool statistics from the most recent sample. The free-list mutex is taken
+// twice per task, so it is the leading suspect for high per-task cost - and a
+// suspect gets checked against a counter, not reasoned about.
+struct PoolProbe {
+    std::uint64_t acquires  = 0;
+    std::uint64_t contended = 0;
+};
+
 template <typename RuntimeT>
 Leg make_leg(std::string name, std::uint32_t workers, ChunkedWorkload& workload,
-             std::uint64_t& inline_executions, SubmissionMode mode) {
+             std::uint64_t& inline_executions, SubmissionMode mode, PoolProbe& probe) {
     Leg leg;
     leg.name = std::move(name);
-    leg.run_once = [workers, &workload, &inline_executions, mode] {
+    leg.run_once = [workers, &workload, &inline_executions, mode, &probe] {
         RuntimeConfig config;
         config.worker_count  = workers;
         config.task_capacity = kTaskCapacity;
@@ -91,10 +105,64 @@ Leg make_leg(std::string name, std::uint32_t workers, ChunkedWorkload& workload,
 
         const double seconds = run_one_sample(runtime, workload, mode);
         inline_executions += runtime.inline_execution_count();
+        probe.acquires  = runtime.pool_acquire_count();
+        probe.contended = runtime.pool_contended_lock_count();
         return seconds;
+    };
+    // Pool statistics from the last measured sample. The free-list mutex is
+    // taken twice per task, so if per-task cost is high this is the first
+    // hypothesis - and it gets checked against a counter rather than argued.
+    leg.record_counters = [&probe](ResultRecorder& recorder) {
+        recorder.count("pool_acquires", probe.acquires);
+        recorder.count("pool_contended_locks", probe.contended);
+    };
+
+    return leg;
+}
+
+#if THUNDERBOLT_HAVE_TASKFLOW
+
+// The external reference, run TWO ways - and the distinction matters for
+// fairness. Handing Taskflow N explicit tasks compares like with like, but it is
+// not how Taskflow is meant to be used: its parallel algorithms partition the
+// range themselves. Reporting only the first would make it look bad for reasons
+// that have nothing to do with scheduling quality, which is exactly the
+// straw-man problem this leg was added to avoid. So both are measured and
+// labelled separately.
+
+Leg make_taskflow_explicit_leg(std::uint32_t workers, ChunkedWorkload& workload) {
+    Leg leg;
+    leg.name     = "taskflow_explicit";
+    leg.run_once = [workers, &workload] {
+        tf::Executor executor(workers);
+        tf::Taskflow flow;
+        const std::size_t chunks = workload.chunk_count();
+        for (std::size_t i = 0; i < chunks; ++i) {
+            flow.emplace([&workload, i] { workload.run_chunk(i); });
+        }
+        // Graph construction is outside the timed region, matching how the
+        // Thunderbolt legs exclude runtime construction.
+        return time_seconds([&] { executor.run(flow).wait(); });
     };
     return leg;
 }
+
+Leg make_taskflow_native_leg(std::uint32_t workers, ChunkedWorkload& workload) {
+    Leg leg;
+    leg.name     = "taskflow_for_each";
+    leg.run_once = [workers, &workload] {
+        tf::Executor executor(workers);
+        tf::Taskflow flow;
+        const std::size_t chunks = workload.chunk_count();
+        // Taskflow chooses its own partitioning here - its best case.
+        flow.for_each_index(std::size_t{0}, chunks, std::size_t{1},
+                            [&workload](std::size_t i) { workload.run_chunk(i); });
+        return time_seconds([&] { executor.run(flow).wait(); });
+    };
+    return leg;
+}
+
+#endif  // THUNDERBOLT_HAVE_TASKFLOW
 
 // Serial reference for the workload-weight gate. If T1 is not comfortably larger
 // than the scheduler's own per-frame cost, the scene is too cheap to say anything
@@ -131,8 +199,13 @@ int run_granularity(const ExperimentOptions& options) {
     const double serial_seconds = measure_serial_baseline(options.work_units);
     std::printf("serial baseline T1 = %.6f s\n\n", serial_seconds);
 
-    std::printf("%10s  %14s  %14s  %14s  %14s\n", "tasks", "standard (s)", "std IQR",
-                "thunderbolt(s)", "tb IQR");
+#if THUNDERBOLT_HAVE_TASKFLOW
+    std::printf("%10s  %13s  %13s  %13s  %13s\n", "tasks", "standard(s)",
+                "thunderbolt", "tf_explicit", "tf_foreach");
+#else
+    std::printf("%10s  %13s  %13s   (no external reference leg; configure with -DTHUNDERBOLT_REFERENCE_RUNTIMES=ON)\n",
+                "tasks", "standard(s)", "thunderbolt");
+#endif
 
     std::ostringstream document;
     JsonWriter         json(document);
@@ -156,20 +229,33 @@ int run_granularity(const ExperimentOptions& options) {
 
         std::uint64_t inline_standard    = 0;
         std::uint64_t inline_thunderbolt = 0;
+        PoolProbe     probe_standard;
+        PoolProbe     probe_thunderbolt;
 
         std::vector<Leg> legs;
         legs.push_back(make_leg<StandardRuntime>("standard", workers, workload, inline_standard,
-                                                 options.submission));
+                                                 options.submission, probe_standard));
         legs.push_back(make_leg<ThunderboltRuntime>("thunderbolt", workers, workload,
-                                                    inline_thunderbolt, options.submission));
+                                                    inline_thunderbolt, options.submission,
+                                                    probe_thunderbolt));
+#if THUNDERBOLT_HAVE_TASKFLOW
+        legs.push_back(make_taskflow_explicit_leg(workers, workload));
+        legs.push_back(make_taskflow_native_leg(workers, workload));
+#endif
 
         RunReport report = run_interleaved(legs, options.run);
 
         const double standard_median    = report.legs[0].timing.median;
         const double thunderbolt_median = report.legs[1].timing.median;
 
-        std::printf("%10zu  %14.6f  %14.6f  %14.6f  %14.6f\n", task_count, standard_median,
-                    report.legs[0].timing.iqr, thunderbolt_median, report.legs[1].timing.iqr);
+        // Every leg gets a column, so an added reference leg cannot silently
+        // run without appearing in the table.
+        std::printf("%10zu  %13.6f  %13.6f", task_count, standard_median,
+                    thunderbolt_median);
+        for (std::size_t leg_index = 2; leg_index < report.legs.size(); ++leg_index) {
+            std::printf("  %13.6f", report.legs[leg_index].timing.median);
+        }
+        std::printf("\n");
 
         // Fit only where there are enough tasks to keep every worker busy. Below
         // that, total time is dominated by load imbalance rather than by
@@ -217,6 +303,21 @@ int run_granularity(const ExperimentOptions& options) {
     // Recorded because it determines WHICH cost is being measured - dispatch, or
     // contention on the shared injection queue.
     json.field("submission_mode", mode_name);
+
+    // The task slab's memory footprint, recorded because it turned out to matter
+    // more than lock contention. At high task counts every slot touch is a cache
+    // miss once the live set exceeds last-level cache.
+    json.field("task_bytes", static_cast<std::uint64_t>(sizeof(Task)));
+    json.field("task_slab_bytes",
+               static_cast<std::uint64_t>(sizeof(Task)) * kTaskCapacity);
+#if THUNDERBOLT_HAVE_TASKFLOW
+    json.field("reference_runtime", TASKFLOW_VERSION_STRING);
+#else
+    // Stated explicitly rather than left out: without an external reference, a
+    // speedup over this project's own baseline is open to the straw-man
+    // objection, and a results file must say so on its face.
+    json.field("reference_runtime", "none");
+#endif
 
     json.begin_object("serial_baseline");
     json.field("t1_seconds", serial_seconds);

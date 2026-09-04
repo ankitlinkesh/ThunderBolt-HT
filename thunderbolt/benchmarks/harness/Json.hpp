@@ -24,17 +24,17 @@ public:
     void begin_object() {
         separate();
         out_ << "{";
-        stack_.push_back(State{true, false});
+        stack_.push_back(State{false, false});
     }
 
     void begin_object(std::string_view key) {
         write_key(key);
         out_ << "{";
-        stack_.push_back(State{true, false});
+        stack_.push_back(State{false, false});
     }
 
     void end_object() {
-        const bool had_entries = !stack_.empty() && stack_.back().first_written;
+        const bool had_entries = !stack_.empty() && stack_.back().any_written;
         stack_.pop_back();
         if (had_entries) {
             newline_indent();
@@ -45,11 +45,11 @@ public:
     void begin_array(std::string_view key) {
         write_key(key);
         out_ << "[";
-        stack_.push_back(State{true, true});
+        stack_.push_back(State{false, true});
     }
 
     void end_array() {
-        const bool had_entries = !stack_.empty() && stack_.back().first_written;
+        const bool had_entries = !stack_.empty() && stack_.back().any_written;
         stack_.pop_back();
         if (had_entries) {
             newline_indent();
@@ -64,6 +64,18 @@ public:
 
     void field(std::string_view key, const std::string& value) {
         field(key, std::string_view{value});
+    }
+
+    // MUST exist, and must come before the bool overload is reachable.
+    //
+    // A string literal is a const char*, and const char* -> bool is a STANDARD
+    // conversion while const char* -> string_view is a user-defined one. Standard
+    // wins, so without this overload every field("k", "some text") silently wrote
+    // `true`. It did exactly that, and produced results files whose every string
+    // value was the literal true, until a parser rejected them.
+    void field(std::string_view key, const char* value) {
+        write_key(key);
+        write_string(value != nullptr ? std::string_view{value} : std::string_view{});
     }
 
     void field(std::string_view key, bool value) {
@@ -104,7 +116,7 @@ public:
 
 private:
     struct State {
-        bool first_written;  // false until the first entry is emitted
+        bool any_written;  // false until the first entry of this container is emitted
         bool is_array;
     };
 
@@ -140,10 +152,10 @@ private:
         if (stack_.empty()) {
             return;
         }
-        if (stack_.back().first_written) {
+        if (stack_.back().any_written) {
             out_ << ",";
         }
-        stack_.back().first_written = true;
+        stack_.back().any_written = true;
         newline_indent();
     }
 
