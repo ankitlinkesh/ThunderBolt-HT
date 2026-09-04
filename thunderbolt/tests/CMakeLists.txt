@@ -7,6 +7,9 @@
 add_executable(thunderbolt_tests
     main.cpp
     test_build_info.cpp
+    test_task_function.cpp
+    test_task_pool.cpp
+    test_standard_runtime.cpp
 )
 
 target_link_libraries(thunderbolt_tests PRIVATE thunderbolt thunderbolt::flags)

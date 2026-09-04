@@ -12,20 +12,25 @@ together with a real-time simulation used as its flagship benchmark workload.
 
 ## Status
 
-**Phase A complete.** Read this section before any other — the rest of this document
+**Phase B complete.** Read this section before any other — the rest of this document
 describes the design, and this section describes what actually exists today.
 
 | | |
 |---|---|
 | Build system, toolchain pinning, three configurations | ✅ built and verified |
 | Architectural guard tests (layering, standalone build) | ✅ built and verified |
-| Task core, `ITaskRuntime`, StandardRuntime | ⬜ Phase B |
+| Task core, `ITaskRuntime`, StandardRuntime | ✅ built and verified |
 | Worker pool, work-stealing deque | ⬜ Phase C |
 | Task dependencies / task graph | ⬜ Phase D |
 | Profiler, benchmark harness | ⬜ Phase E |
 | Headless deterministic simulation | ⬜ Phase F |
 | Adaptive scheduling modes | ⬜ Phase G |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
+
+37 unit tests cover the task core and the baseline runtime, and pass under Debug, Release and
+AddressSanitizer. Because ThreadSanitizer is unavailable here, the concurrency tests are also
+run repeatedly rather than once: 75 consecutive clean runs across the three configurations at
+the time of writing. That is weaker evidence than a race detector and is treated as such.
 
 **No performance numbers are published yet, because none have been measured.** Every figure
 that ever appears in this README will be traceable to a machine-readable result file produced

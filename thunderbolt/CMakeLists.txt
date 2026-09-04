@@ -24,7 +24,9 @@ include(ThunderboltCompilerFlags)
 set(THUNDERBOLT_VERSION_STRING "0.1.0")
 
 add_library(thunderbolt STATIC
+    core/task/TaskPool.cpp
     runtime/BuildInfo.cpp
+    runtime/StandardRuntime.cpp
 )
 add_library(thunderbolt::thunderbolt ALIAS thunderbolt)
 
@@ -34,7 +36,8 @@ target_include_directories(thunderbolt PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>"
 )
 
-target_link_libraries(thunderbolt PUBLIC thunderbolt::flags)
+find_package(Threads REQUIRED)
+target_link_libraries(thunderbolt PUBLIC thunderbolt::flags Threads::Threads)
 
 target_compile_definitions(thunderbolt PRIVATE
     THUNDERBOLT_VERSION_STRING="${THUNDERBOLT_VERSION_STRING}"
