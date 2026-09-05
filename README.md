@@ -47,49 +47,28 @@ is weaker evidence than a race detector and is treated as such.
 Every figure below comes from a run on the machine named in the results file, and each is
 reproducible with the command shown. Nothing here is estimated.
 
-**Compared against an external reference.** Taskflow v3.7.0 is linked into the benchmark target
+**Compared against an external reference.** Taskflow v3.7.0 is linked into the benchmark targets
 only — never into `thunderbolt/` — and run two ways, because handing it explicit tasks compares
 like with like while its native `for_each` partitions the range itself and is its best case.
 Reporting only the first would make it look bad for reasons unrelated to scheduling quality.
 
-Total time for a fixed 2M-unit workload split into 65 536 tasks:
+**Task granularity** (`docs/results/granularity.json`) holds total work constant and varies how
+many tasks it is split into. The slope of total time against task count is the marginal cost of
+one task. 20 repetitions, interleaved, median:
 
-| leg | time | relative |
+| leg | per-task cost | IQR at 65 536 tasks |
 |---|---|---|
-| standard (this project's baseline) | 0.307 s | 1.0× |
-| **thunderbolt** | **0.118 s** | 2.6× |
-| taskflow, explicit tasks | 0.045 s | 6.8× |
-| taskflow, native `for_each` | 0.005 s | 61× |
+| standard | 5282 ns | 12% |
+| **thunderbolt** | **985 ns** | 4% |
+| taskflow, explicit tasks | 404 ns | 6% |
+| taskflow, native `for_each` | 8 ns | 27% |
 
-**Thunderbolt is roughly 4× slower per task than an industrial scheduler on a like-for-like
-comparison.** That is the honest headline, and it is exactly why the external leg was added:
-"beats my own baseline" was true and nearly meaningless.
+**Thunderbolt is ~2.4× behind Taskflow** on the like-for-like comparison. It is ~5.4× cheaper per
+task than this project's own baseline — a real result, and a much weaker claim than it sounds,
+which is exactly why the external leg exists.
 
-**Task granularity** (`docs/results/granularity.json`): per-task cost, recovered as the slope of
-total time against task count with total work held constant, is ~4700 ns for the baseline and
-~1750 ns for Thunderbolt (R² 0.99). The crossover — where decomposing further costs more than it
-buys — sits near **1000 tasks** for this workload. That answers §59.6 and §59.7, and needed no
-game.
-
-**Scaling** (`docs/results/scaling.json`): near-linear to 4 physical cores, with efficiency
-falling across workers 5–8 because those share cores via SMT — the output labels that boundary
-so it is not misread as a scheduling defect. *Caveat:* some runs show efficiency slightly above
-1.0 at 3–5 workers. That is not real superlinear scaling; it reflects turbo behaviour and a
-shrinking per-core working set, and it is reported rather than smoothed away.
-
-### A hypothesis that was tested and disproved
-
-The task pool's free-list mutex was the standing explanation for high per-task cost — it is taken
-twice per task, and instrumentation showed **52.8% of acquisitions contended** at 65 536 tasks.
-
-Sharding the free list across 16 independent sublists reduced contention to **1.3%** and changed
-the measured per-task cost **not at all** (~1750 ns before and after). The contention was real
-but not causal: it was a symptom of workers being serialised somewhere else, not the cause.
-
-The sharding was kept — it is strictly better and costs nothing — but it is recorded here as a
-negative result rather than presented as an optimisation. The next candidate is memory
-footprint: `sizeof(Task)` is 192 bytes, so a 65 536-task live set spans ~12 MB against roughly
-6 MB of last-level cache. That is a hypothesis, not a finding.
+The crossover — where decomposing further costs more than it buys — sits near **1000 tasks** for
+this workload on this machine. That answers §59.6 and §59.7 directly, and needed no game.
 
 ### The simulation workload, and the result it produced
 
@@ -128,6 +107,28 @@ matches the synthetic scaling run where Thunderbolt only pulled ahead past 4 wor
 
 Absolute figures move between sessions with the machine's thermal state; the *ratios* are what
 interleaving makes trustworthy, and they hold across runs.
+
+### Gap 2: a second hypothesis tested and refuted
+
+With the pool mutex ruled out, the remaining candidate for Thunderbolt's per-task cost was memory
+footprint — `sizeof(Task)` is 192 bytes, so a 65 536-task live set spans ~12 MB against roughly
+6 MB of last-level cache.
+
+Tested by **inflating** `Task` to 384 bytes rather than shrinking it: if footprint drives cost,
+doubling it must make things measurably worse. It did not — the measured cost went *down*, which
+is not a real effect of padding and therefore says the experiment could not resolve one.
+Hypothesis refuted; the padding was reverted.
+
+That result was worth more for what it exposed than for what it answered. **The published
+per-task figures were unreliable.** They came from 5-sample runs whose IQR reached **95% of the
+median**. At the 20 repetitions the methodology actually calls for, IQR falls to 4–15% and the
+figure is **985 ns/task, not the ~1750 ns previously reported** — and the gap to Taskflow is
+**~2.4×, not the ~4× previously reported**. The tool's default was already 20; the runs were
+overridden to 5 for speed, which is a methodology violation by the person running it rather than
+a defect in the harness.
+
+Two hypotheses down. The next candidates, in order and untested: `wake_one_worker()` on every
+enqueue, and the successor spinlock on every completion.
 
 ### Two measurement bugs this found
 
