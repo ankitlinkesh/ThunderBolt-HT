@@ -86,16 +86,18 @@ struct PoolProbe {
 
 template <typename RuntimeT>
 Leg make_leg(std::string name, std::uint32_t workers, ChunkedWorkload& workload,
-             std::uint64_t& inline_executions, SubmissionMode mode, PoolProbe& probe) {
+             std::uint64_t& inline_executions, SubmissionMode mode, PoolProbe& probe,
+             std::uint32_t optimizations = kOptNone) {
     Leg leg;
     leg.name = std::move(name);
-    leg.run_once = [workers, &workload, &inline_executions, mode, &probe] {
+    leg.run_once = [workers, &workload, &inline_executions, mode, &probe, optimizations] {
         RuntimeConfig config;
         config.worker_count  = workers;
         config.task_capacity = kTaskCapacity;
         // Large enough that a fork-join burst does not overflow into the global
         // queue, which would quietly turn this back into the External case.
         config.deque_capacity = 131072;
+        config.optimizations  = optimizations;
 
         // A fresh runtime per sample. Reusing one across samples would let a
         // previous sample's parked threads and warmed deques leak into the next,
@@ -134,15 +136,27 @@ Leg make_taskflow_explicit_leg(std::uint32_t workers, ChunkedWorkload& workload)
     Leg leg;
     leg.name     = "taskflow_explicit";
     leg.run_once = [workers, &workload] {
+        // The EXECUTOR is built outside the timed region - it is a thread pool,
+        // the counterpart of constructing a Thunderbolt runtime.
         tf::Executor executor(workers);
-        tf::Taskflow flow;
-        const std::size_t chunks = workload.chunk_count();
-        for (std::size_t i = 0; i < chunks; ++i) {
-            flow.emplace([&workload, i] { workload.run_chunk(i); });
-        }
-        // Graph construction is outside the timed region, matching how the
-        // Thunderbolt legs exclude runtime construction.
-        return time_seconds([&] { executor.run(flow).wait(); });
+
+        // The GRAPH is built INSIDE it, and that correction matters more than
+        // anything else in this file. It was previously outside, on the stated
+        // reasoning that this "matched how the Thunderbolt legs exclude runtime
+        // construction" - a false equivalence. Thunderbolt's submit() allocates a
+        // pool slot and moves the task body, and that is inside its timed region
+        // because per-task cost is exactly what this experiment measures. Timing
+        // Taskflow's execution but not its task creation compared task
+        // creation + scheduling against scheduling alone, and inflated the
+        // reported gap.
+        return time_seconds([&] {
+            tf::Taskflow      flow;
+            const std::size_t chunks = workload.chunk_count();
+            for (std::size_t i = 0; i < chunks; ++i) {
+                flow.emplace([&workload, i] { workload.run_chunk(i); });
+            }
+            executor.run(flow).wait();
+        });
     };
     return leg;
 }
@@ -152,12 +166,15 @@ Leg make_taskflow_native_leg(std::uint32_t workers, ChunkedWorkload& workload) {
     leg.name     = "taskflow_for_each";
     leg.run_once = [workers, &workload] {
         tf::Executor executor(workers);
-        tf::Taskflow flow;
-        const std::size_t chunks = workload.chunk_count();
-        // Taskflow chooses its own partitioning here - its best case.
-        flow.for_each_index(std::size_t{0}, chunks, std::size_t{1},
-                            [&workload](std::size_t i) { workload.run_chunk(i); });
-        return time_seconds([&] { executor.run(flow).wait(); });
+        // Graph construction timed, for the same reason as the explicit leg.
+        return time_seconds([&] {
+            tf::Taskflow      flow;
+            const std::size_t chunks = workload.chunk_count();
+            // Taskflow chooses its own partitioning here - its best case.
+            flow.for_each_index(std::size_t{0}, chunks, std::size_t{1},
+                                [&workload](std::size_t i) { workload.run_chunk(i); });
+            executor.run(flow).wait();
+        });
     };
     return leg;
 }
@@ -215,6 +232,10 @@ int run_granularity(const ExperimentOptions& options) {
 
     std::vector<double> fit_x_standard, fit_y_standard;
     std::vector<double> fit_x_thunderbolt, fit_y_thunderbolt;
+    // leg name -> (task counts, medians), so every leg including the ablation
+    // ones gets a per-task slope rather than only the two originals.
+    std::vector<std::string>         fit_names;
+    std::vector<std::vector<double>> fit_xs, fit_ys;
 
     struct Row {
         std::size_t task_count;
@@ -238,6 +259,19 @@ int run_granularity(const ExperimentOptions& options) {
         legs.push_back(make_leg<ThunderboltRuntime>("thunderbolt", workers, workload,
                                                     inline_thunderbolt, options.submission,
                                                     probe_thunderbolt));
+        // Ablation legs. Interleaved against the baseline in the same run, which
+        // is the only way a few-percent difference is distinguishable from
+        // thermal drift on this machine.
+        legs.push_back(make_leg<ThunderboltRuntime>("tb_o1_skipempty", workers, workload,
+                                                    inline_thunderbolt, options.submission,
+                                                    probe_thunderbolt, kOptSkipEmptyDeques));
+        legs.push_back(make_leg<ThunderboltRuntime>("tb_o2_onebarrier", workers, workload,
+                                                    inline_thunderbolt, options.submission,
+                                                    probe_thunderbolt,
+                                                    kOptSingleBarrierOnComplete));
+        legs.push_back(make_leg<ThunderboltRuntime>(
+            "tb_o12_both", workers, workload, inline_thunderbolt, options.submission,
+            probe_thunderbolt, kOptSkipEmptyDeques | kOptSingleBarrierOnComplete));
 #if THUNDERBOLT_HAVE_TASKFLOW
         legs.push_back(make_taskflow_explicit_leg(workers, workload));
         legs.push_back(make_taskflow_native_leg(workers, workload));
@@ -265,6 +299,18 @@ int run_granularity(const ExperimentOptions& options) {
             fit_y_standard.push_back(standard_median);
             fit_x_thunderbolt.push_back(static_cast<double>(task_count));
             fit_y_thunderbolt.push_back(thunderbolt_median);
+
+            if (fit_names.empty()) {
+                for (const LegResult& leg : report.legs) {
+                    fit_names.push_back(leg.name);
+                    fit_xs.emplace_back();
+                    fit_ys.emplace_back();
+                }
+            }
+            for (std::size_t li = 0; li < report.legs.size() && li < fit_names.size(); ++li) {
+                fit_xs[li].push_back(static_cast<double>(task_count));
+                fit_ys[li].push_back(report.legs[li].timing.median);
+            }
         }
 
         Row row;
@@ -292,6 +338,15 @@ int run_granularity(const ExperimentOptions& options) {
         std::printf("  thunderbolt : %8.1f ns/task   (R^2 = %.3f)\n",
                     fit_thunderbolt.slope * 1e9, fit_thunderbolt.r_squared);
     }
+    std::printf("\nper-leg per-task cost:\n");
+    for (std::size_t li = 0; li < fit_names.size(); ++li) {
+        const LinearFit leg_fit = fit_linear(fit_xs[li], fit_ys[li]);
+        if (leg_fit.valid) {
+            std::printf("  %-20s %8.0f ns/task   (R^2 = %.3f)\n",
+                        fit_names[li].c_str(), leg_fit.slope * 1e9, leg_fit.r_squared);
+        }
+    }
+
     std::printf("\nA low R^2 means the linear-overhead model does not describe the data,\n"
                 "and the slope must not be quoted as a per-task cost.\n");
 

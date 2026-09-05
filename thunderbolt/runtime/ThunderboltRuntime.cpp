@@ -158,9 +158,19 @@ TaskHandle ThunderboltRuntime::pop_local(WorkerState& worker) {
     const bool lowest_first =
         aging_pop_favours_lowest(config().scheduler, worker.pop_index);
 
+    const bool skip_empty = (config().optimizations & kOptSkipEmptyDeques) != 0;
+
     for (std::size_t i = 0; i < kPriorityCount; ++i) {
         const std::size_t p = lowest_first ? (kPriorityCount - 1 - i) : i;
-        TaskHandle        handle;
+
+        // A relaxed probe costs two loads; pop() costs a full memory barrier
+        // whether or not there is anything to take. Four of five priority levels
+        // are usually empty, so this is up to four barriers saved per pop.
+        if (skip_empty && worker.queues[p]->empty_hint()) {
+            continue;
+        }
+
+        TaskHandle handle;
         if (worker.queues[p]->pop(handle)) {
             ++worker.pop_index;
             return handle;

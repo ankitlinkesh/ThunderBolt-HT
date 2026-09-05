@@ -237,7 +237,14 @@ void RuntimeBase::complete(TaskHandle handle) {
     successors.clear();
 
     completed_.fetch_add(1, std::memory_order_relaxed);
-    const std::uint64_t remaining = outstanding_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+
+    // A seq_cst read-modify-write is itself a full barrier, so when this
+    // optimisation is on the standalone fence below is redundant rather than
+    // merely cheap-to-keep.
+    const bool single_barrier = (config_.optimizations & kOptSingleBarrierOnComplete) != 0;
+    const std::uint64_t remaining =
+        outstanding_.fetch_sub(1, single_barrier ? std::memory_order_seq_cst
+                                                 : std::memory_order_acq_rel) - 1;
 
     // Fast path: with nobody waiting there is no wakeup to deliver, so completion
     // never touches the completion mutex.
@@ -249,7 +256,9 @@ void RuntimeBase::complete(TaskHandle handle) {
     // ARM64 reverses freely. This fence, paired with the seq_cst increments on the
     // waiters' side, rules out the interleaving where both miss each other and the
     // waiter never wakes.
-    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (!single_barrier) {
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+    }
 
     const bool wake_handle_waiters = handle_waiters_.load(std::memory_order_relaxed) != 0;
     // A wait_all() waiter cannot possibly be satisfied before the last task, so

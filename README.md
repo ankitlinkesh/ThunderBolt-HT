@@ -57,16 +57,22 @@ Reporting only the first would make it look bad for reasons unrelated to schedul
 many tasks it is split into. The slope of total time against task count is the marginal cost of
 one task. 20 repetitions, interleaved, median:
 
-| leg | per-task cost | IQR at 65 536 tasks |
+| leg | per-task cost | R² |
 |---|---|---|
-| standard | 5282 ns | 12% |
-| **thunderbolt** | **985 ns** | 4% |
-| taskflow, explicit tasks | 404 ns | 6% |
-| taskflow, native `for_each` | 8 ns | 27% |
+| standard | 5191 ns | 0.998 |
+| **thunderbolt** | **1282 ns** | 0.999 |
+| taskflow, explicit tasks | 891 ns | 1.000 |
+| taskflow, native `for_each` | *fit rejected* | 0.034 |
 
-**Thunderbolt is ~2.4× behind Taskflow** on the like-for-like comparison. It is ~5.4× cheaper per
-task than this project's own baseline — a real result, and a much weaker claim than it sounds,
-which is exactly why the external leg exists.
+**Thunderbolt is ~1.44× behind Taskflow** and ~4× cheaper per task than this project's own
+baseline. An earlier version of this table said 2.4× behind — that comparison timed Taskflow's
+*execution* but not its *task creation*, while timing both for Thunderbolt. See
+[docs/RESULTS.md](docs/RESULTS.md) for the correction.
+
+Four hypotheses for the remaining gap have been tested and **all four refuted** — free-list
+contention, task footprint, and two barrier optimisations. The rest is plausibly structural:
+Thunderbolt carries generation-checked handles, a state machine, five priority levels and aging
+that Taskflow's explicit path does not.
 
 The crossover — where decomposing further costs more than it buys — sits near **1000 tasks** for
 this workload on this machine. That answers §59.6 and §59.7 directly, and needed no game.
@@ -150,7 +156,7 @@ That result was worth more for what it exposed than for what it answered. **The 
 per-task figures were unreliable.** They came from 5-sample runs whose IQR reached **95% of the
 median**. At the 20 repetitions the methodology actually calls for, IQR falls to 4–15% and the
 figure is **985 ns/task, not the ~1750 ns previously reported** — and the gap to Taskflow is
-**~2.4×, not the ~4× previously reported**. The tool's default was already 20; the runs were
+**~2.4×, not the ~4× previously reported** — and later corrected again to 1.44× once the benchmark stopped timing Taskflow's execution without its task creation. The tool's default was already 20; the runs were
 overridden to 5 for speed, which is a methodology violation by the person running it rather than
 a defect in the harness.
 
@@ -193,7 +199,8 @@ also produce a different hash, or the check would pass while proving nothing.
 ### What is still NOT measured
 
 - **No timeline profiler (§54).** Only aggregate counters; there is no per-task span capture, which
-  is the tool most likely to explain the remaining 2.4× gap to Taskflow.
+  is the tool most likely to explain the remaining 1.44× gap to Taskflow, now that four
+  counter-based hypotheses have been tested and refuted.
 - **oneTBB was not added.** Taskflow already serves as the external reference and a second heavy
   dependency would add build cost for little extra insight. A deliberate omission, not an oversight.
 - **The workload-weight gate is advisory.** `T₁` is emitted and a warning printed for a scene

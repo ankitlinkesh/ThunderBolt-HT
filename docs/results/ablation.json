@@ -1,0 +1,511 @@
+{
+  "schema": "thunderbolt-benchmark-1",
+  "benchmark": "simulation",
+  "environment": {
+    "cpu": "Intel(R) Core(TM) i5-10310U CPU @ 1.70GHz",
+    "physical_cores": 4,
+    "logical_processors": 8,
+    "smt": true,
+    "ram_bytes": 17018630144,
+    "os": "Windows 10.0 build 26200",
+    "compiler": "MSVC 195136243",
+    "build_config": "Release",
+    "thunderbolt_version": "0.1.0",
+    "debug_assertions": false,
+    "address_sanitizer": false,
+    "timestamp_utc": "2026-09-05T12:34:26Z"
+  },
+  "protocol": {
+    "repetitions": 20,
+    "warmup_discarded": 3,
+    "cooldown_ms": 25,
+    "throttle_fraction": 0.92000000000000004,
+    "interleaved": true,
+    "statistic": "median_and_iqr"
+  },
+  "clock": {
+    "nominal_max_mhz": 2208,
+    "median_observed_mhz": 1580.375,
+    "throttle_reference": "median_observed_mhz",
+    "available": true
+  },
+  "scene": "stress",
+  "vehicles": 500,
+  "npcs": 2000,
+  "aircraft": 40,
+  "seed": 42,
+  "ticks": 200,
+  "workers": 8,
+  "workload_gate": {
+    "serial_tick_ms": 1.1616654999999998,
+    "cpu_bound_enough": true
+  },
+  "state_hash": "9970d1e5a8839cf7",
+  "all_legs_agree": true,
+  "legs": [
+    {
+      "leg": "thunderbolt",
+      "seconds": {
+        "samples": 20,
+        "median": 0.15652685,
+        "iqr": 0.025949625000000004,
+        "p25": 0.14430342500000001,
+        "p75": 0.17025305000000002,
+        "min": 0.13469970000000001,
+        "max": 0.18680849999999999,
+        "mean": 0.15734355
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.13469970000000001,
+          "clock_mhz": 1630.625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1543283,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17192669999999999,
+          "clock_mhz": 1630.625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1563611,
+          "clock_mhz": 1630.625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17175109999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1416838,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16132730000000001,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14433570000000001,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.177233,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16975370000000001,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.18167469999999999,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1460746,
+          "clock_mhz": 1618.0625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14420659999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.15669259999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.18680849999999999,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1630849,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1400295,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.161019,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13719429999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14668590000000001,
+          "clock_mhz": 1530.125,
+          "throttled": false
+        }
+      ]
+    },
+    {
+      "leg": "thunderbolt_o1",
+      "seconds": {
+        "samples": 20,
+        "median": 0.15157809999999999,
+        "iqr": 0.030993925000000005,
+        "p25": 0.14043675,
+        "p75": 0.171430675,
+        "min": 0.1326658,
+        "max": 0.182945,
+        "mean": 0.15590486500000003
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.1678993,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14112649999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17294109999999999,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1709272,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1408538,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17570350000000001,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.15547059999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.182945,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17660970000000001,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1326658,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13764280000000001,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17740239999999999,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14213480000000001,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1476856,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14469129999999999,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17051369999999999,
+          "clock_mhz": 1618.0625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13918559999999999,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1354157,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16873299999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1375499,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        }
+      ]
+    },
+    {
+      "leg": "thunderbolt_o2",
+      "seconds": {
+        "samples": 20,
+        "median": 0.14148574999999999,
+        "iqr": 0.02942392499999999,
+        "p25": 0.1380844,
+        "p75": 0.16750832499999999,
+        "min": 0.13264609999999999,
+        "max": 0.1815001,
+        "mean": 0.15150353
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.14754909999999999,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1571874,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1815001,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13699210000000001,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13555590000000001,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1410602,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13867389999999999,
+          "clock_mhz": 1530.125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1410275,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13626260000000001,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1413402,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1760892,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1726927,
+          "clock_mhz": 1618.0625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13264609999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1766268,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16017780000000001,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17442070000000001,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14163129999999999,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1384485,
+          "clock_mhz": 1618.0625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13440830000000001,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16578019999999999,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        }
+      ]
+    },
+    {
+      "leg": "thunderbolt_o12",
+      "seconds": {
+        "samples": 20,
+        "median": 0.14234495,
+        "iqr": 0.015430949999999971,
+        "p25": 0.13559645000000001,
+        "p75": 0.15102739999999998,
+        "min": 0.1199862,
+        "max": 0.18487799999999999,
+        "mean": 0.14480633000000001
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.1286099,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.12506619999999999,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13754069999999999,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16503039999999999,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13634760000000001,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.15361669999999999,
+          "clock_mhz": 1618.0625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.138735,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1199862,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14385680000000001,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16466839999999999,
+          "clock_mhz": 1630.625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1752956,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1501643,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14083309999999999,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.13334299999999999,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1456567,
+          "clock_mhz": 1630.625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.18487799999999999,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1369823,
+          "clock_mhz": 1618.0625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14764579999999999,
+          "clock_mhz": 1605.5,
+          "throttled": false
+        },
+        {
+          "seconds": 0.14709939999999999,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1207705,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        }
+      ]
+    }
+  ]
+}

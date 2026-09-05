@@ -81,6 +81,12 @@ Leg make_leg(const std::string& name, const SimBenchmarkOptions& options,
             config.scheduler = SchedulerMode::Static;
         } else if (name == "thunderbolt_aging") {
             config.scheduler = SchedulerMode::PriorityAging;
+        } else if (name == "thunderbolt_o1") {
+            config.optimizations = kOptSkipEmptyDeques;
+        } else if (name == "thunderbolt_o2") {
+            config.optimizations = kOptSingleBarrierOnComplete;
+        } else if (name == "thunderbolt_o12") {
+            config.optimizations = kOptSkipEmptyDeques | kOptSingleBarrierOnComplete;
         } else if (name == "thunderbolt_pinned") {
             // S17 as a LEG, not a separate run. Comparing a pinned run against an
             // unpinned run measured minutes apart reintroduces exactly the
@@ -222,6 +228,12 @@ int run_simulation_benchmark(const SimBenchmarkOptions& options) {
                 config.scheduler = SchedulerMode::Static;
             } else if (name == "thunderbolt_aging") {
                 config.scheduler = SchedulerMode::PriorityAging;
+            } else if (name == "thunderbolt_o1") {
+                config.optimizations = kOptSkipEmptyDeques;
+            } else if (name == "thunderbolt_o2") {
+                config.optimizations = kOptSingleBarrierOnComplete;
+            } else if (name == "thunderbolt_o12") {
+                config.optimizations = kOptSkipEmptyDeques | kOptSingleBarrierOnComplete;
             }
             std::unique_ptr<ITaskRuntime> runtime;
             if (name == "standard") {

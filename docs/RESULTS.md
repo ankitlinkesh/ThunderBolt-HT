@@ -72,16 +72,22 @@ that imbalance and nothing more, which is why the margin is 16% rather than 2×.
 **Crossover at roughly 1000 tasks** for this workload. Per-task cost, recovered as the slope of
 total time against task count with total work held constant (20 repetitions):
 
-| leg | per-task cost |
-|---|---|
-| standard | 5282 ns |
-| **thunderbolt** | **985 ns** |
-| taskflow, explicit tasks | 404 ns |
-| taskflow, native `for_each` | 8 ns |
+| leg | per-task cost | R² |
+|---|---|---|
+| standard | 5191 ns | 0.998 |
+| **thunderbolt** | **1282 ns** | 0.999 |
+| taskflow, explicit tasks | 891 ns | 1.000 |
+| taskflow, native `for_each` | *fit rejected* | 0.034 |
 
-Below ~1000 tasks the workload dominates; above it, scheduling does. Thunderbolt is 5.4× cheaper
-per task than this project's own baseline and **2.4× more expensive than Taskflow** on the
-like-for-like comparison.
+Below ~1000 tasks the workload dominates; above it, scheduling does. Thunderbolt is **4.0×
+cheaper per task than this project's own baseline** and **1.44× more expensive than Taskflow**.
+
+The `for_each` row is deliberately not given a number. Its R² is 0.034 - the linear-overhead
+model does not describe it at all, because Taskflow partitions the range itself and the task count
+barely changes how much work it creates. The guard rail did its job: a slope was computed, the fit
+rejected it, and it is not quoted.
+
+**These figures replace an earlier, unfair set.** See the correction below.
 
 ## §59.4 — Does CPU topology awareness improve throughput?
 
@@ -153,12 +159,24 @@ absolute numbers here are what would settle it.
 
 Stated plainly, because §94 says this matters more than the speedup.
 
-1. **It is 2.4× behind an industrial scheduler per task.** Taskflow's like-for-like leg costs
-   404 ns against Thunderbolt's 985 ns, and the cause has not been found. Two hypotheses were
-   tested and both refuted by measurement — free-list mutex contention (reduced 52.8% → 1.3%,
-   no effect) and task memory footprint (doubled `sizeof(Task)`, no effect). Remaining
-   candidates, untested: `wake_one_worker()` on every enqueue, and the successor spinlock on
-   every completion.
+1. **It is 1.44× behind an industrial scheduler per task** — 1282 ns against Taskflow's 891 ns —
+   and the cause has not been found. **Four hypotheses have now been tested and all four
+   refuted:**
+
+   | hypothesis | test | result |
+   |---|---|---|
+   | free-list mutex contention | shard the free list | contention 52.8% → 1.3%, **no time change** |
+   | task memory footprint | double `sizeof(Task)` to 384 B | **no time change** |
+   | barriers wasted on empty deque probes | skip via relaxed probe | 1282 → 1251 ns, **within noise** |
+   | redundant barrier in `complete()` | collapse into the adjacent RMW | 1282 → 1432 ns, **no better** |
+
+   Both optimisation flags are kept, defaulting off, so the negative results stay reproducible
+   rather than becoming an anecdote.
+
+   The remaining 1.44× is plausibly **structural rather than waste**. Thunderbolt carries
+   generation-checked handles, a task state machine, five priority levels, aging and profiling
+   counters. Taskflow's explicit-task path carries none of that. Closing the gap further may mean
+   removing features the spec asked for, which is a design decision rather than an optimisation.
 2. **Efficiency falls past 4 workers**, because workers 5–8 share physical cores. Expected, and
    labelled in output so it is not misread as a scheduling defect.
 3. **Below ~1000 tasks the runtime choice barely matters**; above it, per-task cost dominates and
@@ -166,6 +184,30 @@ Stated plainly, because §94 says this matters more than the speedup.
 4. **On cheap scenes it can lose to serial.** `full_mixed` has a sub-millisecond tick against
    ~150 tasks, so scheduling is a large fraction of the work. The workload-weight gate warns
    about this; it does not enforce it.
+
+## Correction: the Taskflow gap was overstated
+
+An earlier version of this document reported Thunderbolt as **2.4× behind Taskflow** (985 ns
+against 404 ns). That comparison was unfair to Thunderbolt, and the flaw was in this project's own
+benchmark.
+
+The Taskflow leg built its entire task graph *outside* the timed region and measured only
+`executor.run().wait()`. Thunderbolt's `submit()` — which reserves a pool slot and moves the task
+body — was *inside* its timed region. So the comparison was task creation plus scheduling against
+scheduling alone.
+
+The code even carried a comment rationalising it: *"Graph construction is outside the timed
+region, matching how the Thunderbolt legs exclude runtime construction."* That is a false
+equivalence. Excluding **thread-pool** construction is correct and symmetric. Excluding **task**
+construction is not, because per-task cost is the quantity being measured.
+
+With graph construction inside the timed region, Taskflow's per-task cost more than doubled
+(404 → 891 ns) and the honest gap is **1.44×**.
+
+Worth noting the direction. An earlier correction in this project moved a number *against*
+Thunderbolt — a straw-man baseline had made it look too good. This one moved a number *in its
+favour*. Both were found the same way: by re-reading what the timed region actually contained
+instead of trusting the number it printed.
 
 ## What the project got wrong, and how it was caught
 
@@ -180,6 +222,8 @@ Every one of these was found by *running* the system rather than by a test suite
 | Simulation timings had 13–62% spread | Repeating a measurement instead of taking one |
 | Throttle flag fired on 100% of samples | Reading the flag's own output |
 | Published per-task cost off by ~1.8× | Running the 20 reps the protocol specifies |
+| Taskflow gap overstated (2.4× vs 1.44×) | Reading what the timed region actually contained |
+| Two barrier optimisations that do nothing | Ablating them as interleaved legs |
 
 Two performance hypotheses were also **tested and refuted** rather than assumed. That is the
 methodology working: a measurement that says "no" is as useful as one that says "yes", and
