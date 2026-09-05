@@ -233,7 +233,7 @@ per-worker work-stealing queues. It is a systems project usable entirely on its 
 Threads map poorly onto game-shaped workloads: the parallelism is irregular, its width changes
 every frame, and the dependencies between systems are real. Fixed thread-per-system designs
 leave cores idle whenever the frame is not perfectly balanced. Expressing the frame as a task
-graph lets the runtime run whatever is legal to run, whenever a core is free â€” and makes the
+graph lets the runtime run whatever is legal to run, whenever a core is free — and makes the
 *granularity* of that decomposition a measurable, tunable quantity rather than an architectural
 commitment.
 
@@ -260,7 +260,7 @@ commitment.
 
 The dependency arrow points one way only. Application code depends on `ITaskRuntime` and never
 on runtime internals; `thunderbolt/` never depends on `engine/` or `game/`. Both rules are
-enforced by tests (`architecture_layering`, `thunderbolt_builds_standalone`), not by convention â€”
+enforced by tests (`architecture_layering`, `thunderbolt_builds_standalone`), not by convention —
 so the same workload can run under either runtime with no application change, which is what
 makes A/B comparison meaningful at all.
 
@@ -282,7 +282,7 @@ Configurations:
 | Preset | Purpose |
 |---|---|
 | `dev` | Debug / Release / RelWithDebInfo. Debug enables `THUNDERBOLT_DEBUG` assertions. |
-| `asan` | AddressSanitizer. **Finds memory errors, not data races** â€” see Limitations. |
+| `asan` | AddressSanitizer. **Finds memory errors, not data races** — see Limitations. |
 | `ninja` | Faster iteration; requires a Developer Command Prompt for `INCLUDE`/`LIB`. |
 
 Add `-DTHUNDERBOLT_REFERENCE_RUNTIMES=ON` at configure time to fetch Taskflow and include the
@@ -295,7 +295,7 @@ cmake -S thunderbolt -B build/standalone
 ```
 
 To confirm CPU topology detection actually queried the OS rather than taking its fallback path
-â€” the unit tests tolerate the fallback, so this is the check a human runs on real hardware:
+— the unit tests tolerate the fallback, so this is the check a human runs on real hardware:
 
 ```
 ./build/dev/bin/Release/thunderbolt_topology_report
@@ -310,7 +310,7 @@ thunderbolt-bench --experiment scaling     --reps 8  --out scaling.json
 
 `--submission forkjoin` (the default) spawns tasks from inside a root task, so children land on
 a lock-free local deque. `--submission external` submits from outside the runtime, where every
-task goes through the shared injection queue â€” a real pattern, but lock-bound at high task
+task goes through the shared injection queue — a real pattern, but lock-bound at high task
 counts, and roughly 2Ã— more expensive per task. Reporting one while meaning the other is how a
 benchmark ends up describing lock contention as scheduler overhead.
 
@@ -329,7 +329,7 @@ no window and a seeded RNG. Rendering, when it exists, is visualization and sits
 measured path.
 
 **2. Three comparison legs, not two.** StandardRuntime is a *competent* baseline, not a straw
-man â€” but "it beat my own baseline" is a weak claim, so results are also compared against an
+man — but "it beat my own baseline" is a weak claim, so results are also compared against an
 established industrial runtime (oneTBB / Taskflow), linked into the benchmark target only and
 never into the runtime core.
 
@@ -341,7 +341,7 @@ runs are visible instead of silently averaged in.
 
 Determinism is used as the correctness proof: the simulation hashes its full world state, and
 that hash must be **bit-identical** across runtimes and across worker counts. This catches
-scheduler races that stress tests miss â€” which matters here, because ThreadSanitizer is not
+scheduler races that stress tests miss — which matters here, because ThreadSanitizer is not
 available on this toolchain.
 
 ---
@@ -368,7 +368,7 @@ Stated plainly, because they bound what this project can currently claim.
 Committed: task core and baseline runtime, then worker pool and work stealing, dependencies,
 profiler and benchmark harness, headless simulation, adaptive scheduling modes, results.
 
-Beyond that â€” renderer, streamed world, vehicles, aircraft, weather â€” is a genuine multi-year
+Beyond that — renderer, streamed world, vehicles, aircraft, weather — is a genuine multi-year
 scope and is treated as a roadmap rather than a backlog. Scheduling claims will continue to come
 from the headless path regardless of how far the visual side progresses.
 
@@ -376,7 +376,19 @@ from the headless path regardless of how far the visual side progresses.
 
 ## License
 
-MIT â€” see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+Chosen over MIT for its **explicit patent grant** (section 3). That matters more than usual here:
+a task scheduler is the kind of systems code where patents exist, and Apache 2.0 both grants
+contributors' patent rights to users and terminates that grant for anyone who sues over them. MIT
+is silent on patents.
+
+### Third-party code
+
+Taskflow (v3.7.0, MIT) is used **only as a benchmark reference**. It is fetched at configure time
+behind `-DTHUNDERBOLT_REFERENCE_RUNTIMES=ON`, is never vendored into this repository, and links
+only into the benchmark executables — nothing under `thunderbolt/` or `engine/` depends on it, and
+a default build downloads nothing.
 
 No third-party game assets, vehicle brands, or aircraft trademarks are used. Any vehicles or
 aircraft are fictional and original.

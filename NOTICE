@@ -1,0 +1,21 @@
+Thunderbolt HT
+Copyright 2026 Thunderbolt HT contributors
+
+This product includes software developed by the Thunderbolt HT contributors.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full terms.
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+Taskflow (https://github.com/taskflow/taskflow), version 3.7.0
+  Licensed under the MIT License.
+  Copyright (c) 2018-2024 Dr. Tsung-Wei Huang.
+
+  Used ONLY as an external reference implementation for benchmarking. It is
+  fetched at configure time when -DTHUNDERBOLT_REFERENCE_RUNTIMES=ON is set, is
+  not vendored into this repository, and is linked only into the benchmark
+  executables. No part of thunderbolt/ or engine/ depends on it, and a default
+  build does not download it.
