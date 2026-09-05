@@ -88,6 +88,23 @@ bool ThunderboltRuntime::on_own_worker(std::uint32_t& out_index) const {
 }
 
 void ThunderboltRuntime::enqueue_ready(TaskHandle handle, TaskPriority priority) {
+    if (config().scheduler == SchedulerMode::Static) {
+        // The SUBMITTER picks the worker, round-robin, and it stays there. No
+        // stealing will move it later - that is the whole point of the mode, and
+        // what makes it the control for "does stealing actually help?".
+        const std::uint32_t target =
+            static_cursor_.fetch_add(1, std::memory_order_relaxed) % worker_count_;
+        WorkerState& worker = *workers_[target];
+        {
+            std::lock_guard lock(worker.inbox_mutex);
+            worker.inbox[static_cast<std::size_t>(priority)].push_back(handle);
+            ++worker.inbox_count;
+        }
+        submissions_global_.fetch_add(1, std::memory_order_relaxed);
+        wake_one_worker();
+        return;
+    }
+
     std::uint32_t worker_index = TaskContext::kExternalThread;
     bool          queued_local = false;
 
@@ -135,9 +152,38 @@ void ThunderboltRuntime::wake_one_worker() {
 }
 
 TaskHandle ThunderboltRuntime::pop_local(WorkerState& worker) {
-    for (std::size_t p = 0; p < kPriorityCount; ++p) {
-        TaskHandle handle;
+    // Aging inverts the scan on one pop in kAgingInterval, so low-priority work
+    // gets a guaranteed share instead of only whatever is left over. Strict
+    // priority - the default - never takes this branch.
+    const bool lowest_first =
+        aging_pop_favours_lowest(config().scheduler, worker.pop_index);
+
+    for (std::size_t i = 0; i < kPriorityCount; ++i) {
+        const std::size_t p = lowest_first ? (kPriorityCount - 1 - i) : i;
+        TaskHandle        handle;
         if (worker.queues[p]->pop(handle)) {
+            ++worker.pop_index;
+            return handle;
+        }
+    }
+    return TaskHandle{};
+}
+
+TaskHandle ThunderboltRuntime::pop_inbox(WorkerState& worker) {
+    std::lock_guard lock(worker.inbox_mutex);
+    if (worker.inbox_count == 0) {
+        return TaskHandle{};
+    }
+    const bool lowest_first =
+        aging_pop_favours_lowest(config().scheduler, worker.pop_index);
+
+    for (std::size_t i = 0; i < kPriorityCount; ++i) {
+        const std::size_t p = lowest_first ? (kPriorityCount - 1 - i) : i;
+        if (!worker.inbox[p].empty()) {
+            TaskHandle handle = worker.inbox[p].front();
+            worker.inbox[p].pop_front();
+            --worker.inbox_count;
+            ++worker.pop_index;
             return handle;
         }
     }
@@ -145,11 +191,18 @@ TaskHandle ThunderboltRuntime::pop_local(WorkerState& worker) {
 }
 
 TaskHandle ThunderboltRuntime::drain_global(WorkerState& worker) {
-    TaskHandle first = global_.pop();
+    // Aging applies here too. Externally submitted tasks never touch a worker
+    // deque, so rotating only the deque scan would leave them strictly
+    // prioritised - and the starvation test caught exactly that.
+    const bool lowest_first =
+        aging_pop_favours_lowest(config().scheduler, worker.pop_index);
+
+    TaskHandle first = global_.pop(lowest_first);
     if (!first.valid()) {
         return TaskHandle{};
     }
 
+    ++worker.pop_index;
     worker.global_pops.fetch_add(1, std::memory_order_relaxed);
 
     // Pull a few more into the local deque while we hold the cache line warm.
@@ -223,6 +276,30 @@ TaskHandle ThunderboltRuntime::acquire_next(WorkerState& worker, std::uint32_t w
     // Checking global first costs one relaxed atomic load when it is empty, which
     // is the common case, and stealing stays the last resort - which is also the
     // right order by cost, since a steal touches another core's cache line.
+    if (config().scheduler == SchedulerMode::Static) {
+        // Own inbox only. No global drain, no stealing: a static schedule that
+        // quietly rebalanced would not be a static schedule, and the comparison
+        // against stealing would measure nothing.
+        return pop_inbox(worker);
+    }
+
+    // On an aging turn, look for the LOWEST-priority work available anywhere
+    // before anything else, and check the global queue first.
+    //
+    // Checking only the local deque is not enough, and the starvation test proved
+    // it twice. Externally submitted tasks land in the global queue; worse, the
+    // batch drain pulls 32 high-priority tasks into the local deque at a time, so
+    // a local-only rotation keeps finding nothing but criticals while the
+    // background task it is supposed to rescue is still sitting in the queue it
+    // never looks at.
+    if (aging_pop_favours_lowest(config().scheduler, worker.pop_index)) {
+        if (TaskHandle handle = global_.pop(/*lowest_first=*/true); handle.valid()) {
+            ++worker.pop_index;
+            worker.global_pops.fetch_add(1, std::memory_order_relaxed);
+            return handle;
+        }
+    }
+
     if (TaskHandle handle = pop_local(worker); handle.valid()) {
         return handle;
     }
@@ -235,6 +312,15 @@ TaskHandle ThunderboltRuntime::acquire_next(WorkerState& worker, std::uint32_t w
 bool ThunderboltRuntime::any_work_available() const {
     if (global_.size_hint() > 0) {
         return true;
+    }
+    if (config().scheduler == SchedulerMode::Static) {
+        for (const auto& worker : workers_) {
+            std::lock_guard lock(worker->inbox_mutex);
+            if (worker->inbox_count > 0) {
+                return true;
+            }
+        }
+        return false;
     }
     for (const auto& worker : workers_) {
         for (std::size_t p = 0; p < kPriorityCount; ++p) {

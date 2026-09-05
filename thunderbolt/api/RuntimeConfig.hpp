@@ -5,6 +5,8 @@
 // A/B comparison (S57, S94).
 #pragma once
 
+#include <thunderbolt/api/SchedulerMode.hpp>
+
 #include <cstdint>
 
 namespace thunderbolt {
@@ -43,6 +45,10 @@ struct RuntimeConfig {
     // avoid. Overflow is counted, so a capacity set too low is visible rather
     // than silently changing what the benchmark measures.
     std::uint32_t deque_capacity = 4096;
+
+    // S12. Which scheduling strategy ThunderboltRuntime uses. Ignored by
+    // StandardRuntime, which has one strategy by definition - it is the baseline.
+    SchedulerMode scheduler = SchedulerMode::WorkStealing;
 
     // Off by default (S17). Lives here rather than on one runtime so that it
     // stays constant across an A/B comparison instead of being one runtime's

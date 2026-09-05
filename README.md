@@ -12,7 +12,7 @@ together with a real-time simulation used as its flagship benchmark workload.
 
 ## Status
 
-**Phase F complete.** Read this section before any other — the rest of this document
+**Phases A–H complete.** Read this section before any other — the rest of this document
 describes the design, and this section describes what actually exists today.
 
 | | |
@@ -24,10 +24,11 @@ describes the design, and this section describes what actually exists today.
 | Task dependencies / task graph | ✅ built and verified |
 | Profiler counters, benchmark harness, first results | ✅ built and measured |
 | Headless deterministic simulation | ✅ built and verified |
-| Adaptive scheduling modes | ⬜ Phase G |
+| Scheduler modes (static / stealing / aging) | ✅ built and measured |
+| Results report answering the §59 questions | ✅ [docs/RESULTS.md](docs/RESULTS.md) |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
-105 unit tests pass under Debug, Release and AddressSanitizer. **28 of them are conformance
+119 unit tests pass under Debug, Release and AddressSanitizer. **28 of them are conformance
 suites run against *both* runtimes** — that is the structural guarantee behind the A/B
 methodology: if StandardRuntime and ThunderboltRuntime ever disagree about what the task API
 means, the build fails rather than the disagreement being measured later and reported as a
@@ -107,6 +108,32 @@ matches the synthetic scaling run where Thunderbolt only pulled ahead past 4 wor
 
 Absolute figures move between sessions with the machine's thermal state; the *ratios* are what
 interleaving makes trustworthy, and they hold across runs.
+
+### Scheduler modes (§12), and the starvation bound (§13)
+
+Three strategies, compared on the same scene through the same harness
+(`docs/results/scheduler_modes.json`):
+
+| mode | ms/tick | IQR |
+|---|---|---|
+| static (round-robin, no stealing) | 0.776 | 0.028 |
+| work stealing (default) | 0.668 | 0.039 |
+| priority aging | 0.642 | 0.007 |
+
+**Stealing beats static by 1.16×** — which answers §59.2 with a measurement rather than an
+assumption, and is a smaller margin than the premise "stealing is obviously better" suggests.
+Static loses because frame-graph stages are not uniform, so a round-robin split leaves workers
+idle at each barrier; stealing recovers that imbalance and nothing more.
+
+**Aging costs nothing measurable here.** It is still off by default, because weakening strict
+priority is a trade the caller should make deliberately rather than one taken on their behalf.
+
+§13's fairness requirement now has a test, having previously been asserted in the plan and never
+checked. The bound is in *tasks*, not "eventually": one pop in eight goes to the lowest non-empty
+priority, so a background task at the head cannot wait behind more than ~8 criticals. Building it
+found the rotation was applied only to worker deques — externally submitted work lands in the
+global queue, and the batch drain pulls 32 high-priority tasks into the local deque at a time, so
+the rotation kept finding nothing to rescue. The test failed twice before the mechanism was right.
 
 ### Gap 2: a second hypothesis tested and refuted
 

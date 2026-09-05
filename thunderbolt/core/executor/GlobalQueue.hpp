@@ -31,10 +31,16 @@ public:
         count_.fetch_add(1, std::memory_order_release);
     }
 
-    // Returns an invalid handle when empty. Scans highest priority first, so the
-    // ordering matches StandardRuntime's - a divergence here would show up as a
-    // scheduling result rather than the semantic difference it actually is.
-    [[nodiscard]] TaskHandle pop() {
+    // Returns an invalid handle when empty. Scans highest priority first by
+    // default, so ordering matches StandardRuntime's - a divergence here would
+    // show up as a scheduling result rather than the semantic difference it is.
+    //
+    // `lowest_first` inverts the scan for aging. It has to exist: externally
+    // submitted work lands HERE, not on a worker deque, so an aging rotation
+    // applied only to the deques would leave exactly the tasks a user submitted
+    // subject to strict priority - which is the starvation the mode exists to
+    // prevent. Found by the starvation test failing.
+    [[nodiscard]] TaskHandle pop(bool lowest_first = false) {
         // Unsynchronised early-out. A false negative is harmless: the caller is
         // about to try stealing anyway, and a task left here will be found on the
         // next pass or by another worker.
@@ -43,7 +49,8 @@ public:
         }
 
         std::lock_guard lock(mutex_);
-        for (std::size_t p = 0; p < kPriorityCount; ++p) {
+        for (std::size_t i = 0; i < kPriorityCount; ++i) {
+            const std::size_t p = lowest_first ? (kPriorityCount - 1 - i) : i;
             if (!queues_[p].empty()) {
                 TaskHandle handle = queues_[p].front();
                 queues_[p].pop_front();

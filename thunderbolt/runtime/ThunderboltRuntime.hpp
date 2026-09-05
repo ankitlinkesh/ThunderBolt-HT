@@ -18,6 +18,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -85,6 +86,20 @@ private:
         std::atomic<std::uint64_t> steals_failed{0};
         std::atomic<std::uint64_t> global_pops{0};
         std::atomic<std::uint64_t> parks{0};
+
+        // Pops performed by this worker. Drives the aging rotation, which is why
+        // it is plain (owner-only) rather than atomic.
+        std::uint64_t pop_index = 0;
+
+        // Static-mode inbox. Only used when SchedulerMode::Static is selected.
+        //
+        // A separate structure is unavoidable: static assignment means the
+        // SUBMITTER chooses the worker, and the ABP deque is strictly
+        // single-producer - only its owner may push. Pushing another worker's
+        // deque would corrupt it silently rather than fail.
+        std::mutex             inbox_mutex;
+        std::deque<TaskHandle> inbox[kPriorityCount];
+        std::uint32_t          inbox_count = 0;
     };
     TB_END_CACHE_ALIGNED_TYPE
 
@@ -95,6 +110,7 @@ private:
     [[nodiscard]] TaskHandle acquire_next(WorkerState& worker, std::uint32_t worker_index);
 
     [[nodiscard]] TaskHandle pop_local(WorkerState& worker);
+    [[nodiscard]] TaskHandle pop_inbox(WorkerState& worker);
     [[nodiscard]] TaskHandle steal_from_others(WorkerState& worker, std::uint32_t worker_index);
 
     // Moves a batch of tasks from the global queue into the worker's own deque
@@ -119,6 +135,9 @@ private:
     std::atomic<std::uint64_t> submissions_local_{0};
     std::atomic<std::uint64_t> submissions_global_{0};
     std::atomic<std::uint32_t> pinned_workers_{0};
+
+    // Round-robin cursor for static assignment.
+    std::atomic<std::uint32_t> static_cursor_{0};
 
     // Parking. Workers spin briefly before sleeping, because on a frame-based
     // workload the next task usually arrives within microseconds and a

@@ -1,0 +1,191 @@
+{
+  "schema": "thunderbolt-benchmark-1",
+  "benchmark": "simulation",
+  "environment": {
+    "cpu": "Intel(R) Core(TM) i5-10310U CPU @ 1.70GHz",
+    "physical_cores": 4,
+    "logical_processors": 8,
+    "smt": true,
+    "ram_bytes": 17018630144,
+    "os": "Windows 10.0 build 26200",
+    "compiler": "MSVC 195136243",
+    "build_config": "Release",
+    "thunderbolt_version": "0.1.0",
+    "debug_assertions": false,
+    "address_sanitizer": false,
+    "timestamp_utc": "2026-09-05T09:30:44Z"
+  },
+  "protocol": {
+    "repetitions": 4,
+    "warmup_discarded": 1,
+    "cooldown_ms": 25,
+    "throttle_fraction": 0.92000000000000004,
+    "interleaved": true,
+    "statistic": "median_and_iqr"
+  },
+  "clock": {
+    "nominal_max_mhz": 2208,
+    "median_observed_mhz": 1517.5625,
+    "throttle_reference": "median_observed_mhz",
+    "available": true
+  },
+  "scene": "stress",
+  "vehicles": 500,
+  "npcs": 2000,
+  "aircraft": 40,
+  "seed": 42,
+  "ticks": 100,
+  "workers": 8,
+  "workload_gate": {
+    "serial_tick_ms": 1.3963680000000001,
+    "cpu_bound_enough": true
+  },
+  "state_hash": "c9e82739e8584cc5",
+  "all_legs_agree": true,
+  "legs": [
+    {
+      "leg": "thunderbolt_static",
+      "seconds": {
+        "samples": 4,
+        "median": 0.077593200000000001,
+        "iqr": 0.0028139000000000081,
+        "p25": 0.075855949999999991,
+        "p75": 0.07866985,
+        "min": 0.0731657,
+        "max": 0.079378299999999999,
+        "mean": 0.076932600000000004
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.079378299999999999,
+          "clock_mhz": 1517.5625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.0731657,
+          "clock_mhz": 1517.5625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.078433699999999995,
+          "clock_mhz": 1505,
+          "throttled": false
+        },
+        {
+          "seconds": 0.076752699999999993,
+          "clock_mhz": 1517.5625,
+          "throttled": false
+        }
+      ]
+    },
+    {
+      "leg": "thunderbolt",
+      "seconds": {
+        "samples": 4,
+        "median": 0.066836649999999997,
+        "iqr": 0.0038489749999999906,
+        "p25": 0.065704525,
+        "p75": 0.06955349999999999,
+        "min": 0.062918799999999997,
+        "max": 0.077093400000000006,
+        "mean": 0.068421375000000006
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.067040199999999994,
+          "clock_mhz": 1517.5625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.062918799999999997,
+          "clock_mhz": 1505,
+          "throttled": false
+        },
+        {
+          "seconds": 0.066633100000000001,
+          "clock_mhz": 1542.6875,
+          "throttled": false
+        },
+        {
+          "seconds": 0.077093400000000006,
+          "clock_mhz": 1530.125,
+          "throttled": false
+        }
+      ]
+    },
+    {
+      "leg": "thunderbolt_aging",
+      "seconds": {
+        "samples": 4,
+        "median": 0.064170499999999991,
+        "iqr": 0.0006611250000000124,
+        "p25": 0.064020949999999993,
+        "p75": 0.064682075000000006,
+        "min": 0.064007900000000006,
+        "max": 0.065781199999999998,
+        "mean": 0.064532525000000007
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.064315700000000003,
+          "clock_mhz": 1517.5625,
+          "throttled": false
+        },
+        {
+          "seconds": 0.064007900000000006,
+          "clock_mhz": 1505,
+          "throttled": false
+        },
+        {
+          "seconds": 0.064025299999999993,
+          "clock_mhz": 1530.125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.065781199999999998,
+          "clock_mhz": 1517.5625,
+          "throttled": false
+        }
+      ]
+    },
+    {
+      "leg": "taskflow",
+      "seconds": {
+        "samples": 4,
+        "median": 0.040822250000000004,
+        "iqr": 0.001167850000000005,
+        "p25": 0.040089399999999997,
+        "p75": 0.041257250000000002,
+        "min": 0.038789799999999999,
+        "max": 0.0416633,
+        "mean": 0.040524400000000002
+      },
+      "throttled_samples": 0,
+      "samples": [
+        {
+          "seconds": 0.0416633,
+          "clock_mhz": 1592.9375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.040522599999999999,
+          "clock_mhz": 1580.375,
+          "throttled": false
+        },
+        {
+          "seconds": 0.041121900000000003,
+          "clock_mhz": 1567.8125,
+          "throttled": false
+        },
+        {
+          "seconds": 0.038789799999999999,
+          "clock_mhz": 1555.25,
+          "throttled": false
+        }
+      ]
+    }
+  ]
+}

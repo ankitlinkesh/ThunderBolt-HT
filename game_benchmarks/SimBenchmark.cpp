@@ -73,6 +73,14 @@ Leg make_leg(const std::string& name, const SimBenchmarkOptions& options,
         config.worker_count  = workers;
         config.task_capacity = 262144;
 
+        // S12 modes are selected by leg name, so a mode comparison is an ordinary
+        // interleaved A/B rather than a separate code path with its own protocol.
+        if (name == "thunderbolt_static") {
+            config.scheduler = SchedulerMode::Static;
+        } else if (name == "thunderbolt_aging") {
+            config.scheduler = SchedulerMode::PriorityAging;
+        }
+
         std::unique_ptr<ITaskRuntime> runtime;
         if (name == "standard") {
             runtime = std::make_unique<StandardRuntime>(config);
@@ -196,6 +204,11 @@ int run_simulation_benchmark(const SimBenchmarkOptions& options) {
             RuntimeConfig config;
             config.worker_count  = workers;
             config.task_capacity = 262144;
+            if (name == "thunderbolt_static") {
+                config.scheduler = SchedulerMode::Static;
+            } else if (name == "thunderbolt_aging") {
+                config.scheduler = SchedulerMode::PriorityAging;
+            }
             std::unique_ptr<ITaskRuntime> runtime;
             if (name == "standard") {
                 runtime = std::make_unique<StandardRuntime>(config);
