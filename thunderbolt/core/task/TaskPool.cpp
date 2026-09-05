@@ -5,19 +5,15 @@
 #include <utility>
 
 namespace thunderbolt {
-namespace {
-
-// Stable per-thread shard assignment, handed out round-robin on first use. A hash
-// of the thread id would also work but distributes unpredictably; a counter keeps
-// distinct threads on distinct shards for as many threads as there are shards.
-std::atomic<std::uint32_t> g_next_shard{0};
-
-} // namespace
 
 std::uint32_t TaskPool::preferred_shard() noexcept {
-    static thread_local const std::uint32_t shard =
-        g_next_shard.fetch_add(1, std::memory_order_relaxed) % kShardCount;
-    return shard;
+    // One assignment scheme for the whole runtime. This used to keep its own
+    // thread-local counter, which put the same thread on unrelated slots in
+    // unrelated structures for no benefit.
+    static_assert(kShardCount == kCounterShards,
+                  "free-list shards and counter shards share thread_slot(), so their counts "
+                  "must agree or a thread would index out of range");
+    return thread_slot();
 }
 
 TaskPool::TaskPool(std::uint32_t capacity)
@@ -40,13 +36,13 @@ void TaskPool::lock_counting(std::unique_lock<std::mutex>& lock) const {
     // try_lock first: an uncontended acquisition costs the same as a plain lock,
     // and a failed attempt is exactly the definition of contention.
     if (!lock.try_lock()) {
-        contended_locks_.fetch_add(1, std::memory_order_relaxed);
+        contended_locks_.increment();
         lock.lock();
     }
 }
 
 TaskHandle TaskPool::acquire(TaskDesc&& desc) {
-    acquire_count_.fetch_add(1, std::memory_order_relaxed);
+    acquire_count_.increment();
 
     const std::uint32_t home = preferred_shard();
 
@@ -69,7 +65,7 @@ TaskHandle TaskPool::acquire(TaskDesc&& desc) {
             shard.free_list.pop_back();
             found = true;
         } else if (offset == 0) {
-            shard_misses_.fetch_add(1, std::memory_order_relaxed);
+            shard_misses_.increment();
         }
     }
 
@@ -131,7 +127,7 @@ void TaskPool::release(TaskHandle handle) {
     task.reset_successors();
     task.state.store(TaskState::Free, std::memory_order_release);
 
-    release_count_.fetch_add(1, std::memory_order_relaxed);
+    release_count_.increment();
 
     // Returned to the RELEASING thread's shard, not the slot's original one. A
     // worker that consumes and completes tasks therefore recycles through its own

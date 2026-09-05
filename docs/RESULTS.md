@@ -74,20 +74,20 @@ total time against task count with total work held constant (20 repetitions):
 
 | leg | per-task cost | R² |
 |---|---|---|
-| standard | 5191 ns | 0.998 |
-| **thunderbolt** | **1282 ns** | 0.999 |
-| taskflow, explicit tasks | 891 ns | 1.000 |
-| taskflow, native `for_each` | *fit rejected* | 0.034 |
+| standard | 3627-4031 ns | 0.997 |
+| **thunderbolt** | **597-633 ns** | 0.998 |
+| taskflow, explicit tasks | 643 ns | 0.999 |
+| taskflow, native `for_each` | *fit rejected* | 0.26 |
 
-Below ~1000 tasks the workload dominates; above it, scheduling does. Thunderbolt is **4.0×
-cheaper per task than this project's own baseline** and **1.44× more expensive than Taskflow**.
+Below ~1000 tasks the workload dominates; above it, scheduling does. **Thunderbolt is now faster per task than Taskflow's like-for-like leg** — 597-633 ns against 643 ns, measured in two independent interleaved runs. Taskflow reported 643 ns in both, which is what makes the margin credible rather than a lucky sample.
 
 The `for_each` row is deliberately not given a number. Its R² is 0.034 - the linear-overhead
 model does not describe it at all, because Taskflow partitions the range itself and the task count
 barely changes how much work it creates. The guard rail did its job: a slope was computed, the fit
 rejected it, and it is not quoted.
 
-**These figures replace an earlier, unfair set.** See the correction below.
+**These figures replace an earlier set**, for two separate reasons: an unfair timed region (see
+the correction below), and then a real optimisation (see *Closing the gap*).
 
 ## §59.4 — Does CPU topology awareness improve throughput?
 
@@ -154,6 +154,42 @@ For a real-time system that trade is worth stating explicitly: if a workload nee
 absolute numbers here are what would settle it.
 
 ---
+
+## Closing the gap: what actually worked
+
+Four hypotheses were refuted before one landed, and the pattern across them was the diagnosis.
+All four were *micro*-optimisations — shave a mutex, shrink a struct, drop a barrier. None moved
+the number. When removing individual operations changes nothing, the cost is in the shape of the
+path, not its details.
+
+**The cause was cache-line contention on counters nobody reads on the hot path.** Every task
+performed five global atomic read-modify-writes, and the counters holding them were declared
+consecutively with no padding — `outstanding_`, `completed_`, `inline_executions_`,
+`dependency_edges_` and `dependencies_pre_satisfied_` all inside one 64-byte line, plus four more
+in `TaskPool`. That line was written twice per task by every worker and ping-ponged across all
+eight cores: true sharing and false sharing at the same address.
+
+The fix, in `core/ShardedCounter.hpp`:
+
+- Four of the five counters exist only to be **reported**. Each write now goes to a per-thread
+  slot on its own cache line; the total is summed when somebody asks.
+- The fifth, `outstanding_`, is deliberately **not** sharded. `wait_all()` needs an exact zero
+  from it, and summing sixteen slots that other cores are writing means sixteen cache misses —
+  worse than the single atomic. It stays one counter and gets its own cache line instead.
+
+| | before | after |
+|---|---|---|
+| thunderbolt | 1282 ns/task | **597-633 ns/task** |
+| standard | 5191 ns/task | 3627-4031 ns/task |
+| simulation (`stress`, 8 workers) | 0.886 ms/tick | **0.499 ms/tick** |
+
+Roughly **2x on per-task cost**, from deleting contention rather than work. The baseline improved
+too, because it shares the same `RuntimeBase` counters.
+
+**One honest limit.** Beating Taskflow per task did *not* close the gap on the frame graph: the
+simulation still runs 0.499 ms/tick against Taskflow's 0.363. The simulation issues only ~150
+tasks per tick, so per-task cost is a small share of a frame dominated by ten stage barriers. The
+two benchmarks measure different things and Stage 1 only moved one of them.
 
 ## Where Thunderbolt fails to scale
 

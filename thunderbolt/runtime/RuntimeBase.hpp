@@ -15,6 +15,7 @@
 
 #include <thunderbolt/api/ITaskRuntime.hpp>
 #include <thunderbolt/api/RuntimeConfig.hpp>
+#include <thunderbolt/core/ShardedCounter.hpp>
 #include <thunderbolt/core/task/TaskPool.hpp>
 
 #include <atomic>
@@ -23,6 +24,10 @@
 #include <mutex>
 
 namespace thunderbolt {
+
+// Cache-line-aligned members below deliberately pad this class; that padding is
+// the point, so C4324 is suppressed here rather than project-wide.
+TB_BEGIN_CACHE_ALIGNED_TYPE
 
 class RuntimeBase : public ITaskRuntime {
 public:
@@ -43,7 +48,7 @@ public:
     // configured task_capacity was too small: the run stayed correct, but its
     // parallelism was reduced and any result must say so.
     [[nodiscard]] std::uint64_t inline_execution_count() const noexcept {
-        return inline_executions_.load(std::memory_order_relaxed);
+        return inline_executions_.unsigned_sum();
     }
 
     [[nodiscard]] std::uint64_t outstanding_task_count() const noexcept {
@@ -51,17 +56,17 @@ public:
     }
 
     [[nodiscard]] std::uint64_t completed_task_count() const noexcept {
-        return completed_.load(std::memory_order_relaxed);
+        return completed_.unsigned_sum();
     }
 
     // Dependency edges registered, and how many of those found their predecessor
     // already finished. A high already-satisfied ratio means the graph is being
     // built after the fact and is buying no parallelism.
     [[nodiscard]] std::uint64_t dependency_edge_count() const noexcept {
-        return dependency_edges_.load(std::memory_order_relaxed);
+        return dependency_edges_.unsigned_sum();
     }
     [[nodiscard]] std::uint64_t dependencies_already_satisfied() const noexcept {
-        return dependencies_pre_satisfied_.load(std::memory_order_relaxed);
+        return dependencies_pre_satisfied_.unsigned_sum();
     }
 
     // Task-pool free-list statistics. Exposed because the pool mutex is taken
@@ -147,11 +152,23 @@ private:
     std::atomic<std::uint32_t> handle_waiters_{0};
     std::atomic<std::uint32_t> all_waiters_{0};
 
-    std::atomic<std::uint64_t> outstanding_{0};
-    std::atomic<std::uint64_t> completed_{0};
-    std::atomic<std::uint64_t> inline_executions_{0};
-    std::atomic<std::uint64_t> dependency_edges_{0};
-    std::atomic<std::uint64_t> dependencies_pre_satisfied_{0};
+    // NOT sharded, and on its own cache line.
+    //
+    // wait_all() needs an exact zero from this, and summing sixteen shards that
+    // other cores are writing would mean sixteen cache misses per check - worse
+    // than the single atomic. So it stays one counter and instead gets isolated:
+    // it previously shared a line with the four counters below, all of which are
+    // also written per task, so the line was contended for several independent
+    // reasons at once.
+    alignas(kCacheLineSize) std::atomic<std::uint64_t> outstanding_{0};
+
+    // Sharded. Written on the hot path, read only by reports and tests.
+    alignas(kCacheLineSize) ShardedCounter completed_;
+    ShardedCounter inline_executions_;
+    ShardedCounter dependency_edges_;
+    ShardedCounter dependencies_pre_satisfied_;
 };
+
+TB_END_CACHE_ALIGNED_TYPE
 
 } // namespace thunderbolt

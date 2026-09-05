@@ -13,11 +13,11 @@
     "thunderbolt_version": "0.1.0",
     "debug_assertions": false,
     "address_sanitizer": false,
-    "timestamp_utc": "2026-09-05T05:21:30Z"
+    "timestamp_utc": "2026-09-05T14:08:20Z"
   },
   "protocol": {
-    "repetitions": 6,
-    "warmup_discarded": 2,
+    "repetitions": 20,
+    "warmup_discarded": 3,
     "cooldown_ms": 25,
     "throttle_fraction": 0.92000000000000004,
     "interleaved": true,
@@ -25,7 +25,7 @@
   },
   "clock": {
     "nominal_max_mhz": 2208,
-    "median_observed_mhz": 1530.125,
+    "median_observed_mhz": 1706,
     "throttle_reference": "median_observed_mhz",
     "available": true
   },
@@ -37,7 +37,7 @@
   "ticks": 200,
   "workers": 8,
   "workload_gate": {
-    "serial_tick_ms": 1.4009525,
+    "serial_tick_ms": 0.88401149999999995,
     "cpu_bound_enough": true
   },
   "state_hash": "9970d1e5a8839cf7",
@@ -46,45 +46,115 @@
     {
       "leg": "serial",
       "seconds": {
-        "samples": 6,
-        "median": 0.33851560000000003,
-        "iqr": 0.004981624999999934,
-        "p25": 0.33550575000000005,
-        "p75": 0.34048737499999998,
-        "min": 0.3260711,
-        "max": 0.39790439999999999,
-        "mean": 0.34610896666666663
+        "samples": 20,
+        "median": 0.20387284999999999,
+        "iqr": 0.021970574999999992,
+        "p25": 0.19474540000000001,
+        "p75": 0.21671597500000001,
+        "min": 0.17822089999999999,
+        "max": 0.25283660000000002,
+        "mean": 0.20684466499999998
       },
       "throttled_samples": 0,
       "samples": [
         {
-          "seconds": 0.34087909999999999,
-          "clock_mhz": 1517.5625,
+          "seconds": 0.17822089999999999,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.3260711,
-          "clock_mhz": 1530.125,
+          "seconds": 0.2175918,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.33931220000000001,
-          "clock_mhz": 1542.6875,
+          "seconds": 0.21531159999999999,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.39790439999999999,
-          "clock_mhz": 1542.6875,
+          "seconds": 0.223471,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.33476800000000001,
-          "clock_mhz": 1530.125,
+          "seconds": 0.19838900000000001,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.33771899999999999,
-          "clock_mhz": 1530.125,
+          "seconds": 0.18268999999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.21675340000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.18786710000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.25283660000000002,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.24815419999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1960923,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.21670349999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.19628139999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.2100138,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1907047,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.20843100000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.19931470000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.18751719999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.21139579999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.19915330000000001,
+          "clock_mhz": 1706,
           "throttled": false
         }
       ]
@@ -92,45 +162,115 @@
     {
       "leg": "standard",
       "seconds": {
-        "samples": 6,
-        "median": 0.28577039999999998,
-        "iqr": 0.040560600000000058,
-        "p25": 0.27256492499999996,
-        "p75": 0.31312552500000002,
-        "min": 0.26658199999999999,
-        "max": 0.38848850000000001,
-        "mean": 0.30283638333333329
+        "samples": 20,
+        "median": 0.16355724999999999,
+        "iqr": 0.0077753499999999864,
+        "p25": 0.15991217500000002,
+        "p75": 0.167687525,
+        "min": 0.152027,
+        "max": 0.1902604,
+        "mean": 0.16493951499999998
       },
       "throttled_samples": 0,
       "samples": [
         {
-          "seconds": 0.38848850000000001,
-          "clock_mhz": 1505,
+          "seconds": 0.152027,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.31877509999999998,
-          "clock_mhz": 1530.125,
+          "seconds": 0.16710810000000001,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.29617680000000002,
-          "clock_mhz": 1530.125,
+          "seconds": 0.17286309999999999,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.26658199999999999,
-          "clock_mhz": 1517.5625,
+          "seconds": 0.17646010000000001,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.27163189999999998,
-          "clock_mhz": 1517.5625,
+          "seconds": 0.15907180000000001,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.275364,
-          "clock_mhz": 1505,
+          "seconds": 0.15711220000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16662350000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1554818,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1902604,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16667870000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16019230000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1626669,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1527404,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16156419999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16354640000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17205300000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16641410000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16942579999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16293240000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.16356809999999999,
+          "clock_mhz": 1706,
           "throttled": false
         }
       ]
@@ -138,45 +278,115 @@
     {
       "leg": "thunderbolt",
       "seconds": {
-        "samples": 6,
-        "median": 0.177199,
-        "iqr": 0.0077580000000000426,
-        "p25": 0.17338607499999997,
-        "p75": 0.18114407500000002,
-        "min": 0.12583059999999999,
-        "max": 0.18389230000000001,
-        "mean": 0.16978251666666666
+        "samples": 20,
+        "median": 0.099694349999999987,
+        "iqr": 0.020800874999999996,
+        "p25": 0.091069074999999999,
+        "p75": 0.11186995,
+        "min": 0.083248900000000001,
+        "max": 0.17317460000000001,
+        "mean": 0.10447368500000001
       },
       "throttled_samples": 0,
       "samples": [
         {
-          "seconds": 0.12583059999999999,
-          "clock_mhz": 1542.6875,
+          "seconds": 0.083248900000000001,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.17639440000000001,
-          "clock_mhz": 1517.5625,
+          "seconds": 0.13012280000000001,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.18389230000000001,
-          "clock_mhz": 1530.125,
+          "seconds": 0.091634099999999996,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.17238329999999999,
-          "clock_mhz": 1555.25,
+          "seconds": 0.098061899999999994,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.18219089999999999,
-          "clock_mhz": 1517.5625,
+          "seconds": 0.096760100000000002,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.17800360000000001,
-          "clock_mhz": 1530.125,
+          "seconds": 0.1079782,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.089373999999999995,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1177498,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1143494,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.10132679999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1117148,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.088483800000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.084815799999999997,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.093520199999999998,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1077627,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.095060599999999995,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.087092600000000006,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.17317460000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1123354,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.10490720000000001,
+          "clock_mhz": 1706,
           "throttled": false
         }
       ]
@@ -184,45 +394,115 @@
     {
       "leg": "taskflow",
       "seconds": {
-        "samples": 6,
-        "median": 0.13430265000000002,
-        "iqr": 0.015529824999999997,
-        "p25": 0.12587110000000001,
-        "p75": 0.14140092500000001,
-        "min": 0.073629200000000006,
-        "max": 0.15215400000000001,
-        "mean": 0.12686935000000002
+        "samples": 20,
+        "median": 0.072522799999999998,
+        "iqr": 0.018333924999999987,
+        "p25": 0.065065750000000006,
+        "p75": 0.083399674999999993,
+        "min": 0.057260600000000002,
+        "max": 0.1067901,
+        "mean": 0.075389849999999994
       },
       "throttled_samples": 0,
       "samples": [
         {
-          "seconds": 0.14081540000000001,
-          "clock_mhz": 1567.8125,
+          "seconds": 0.089432399999999995,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.12778990000000001,
-          "clock_mhz": 1517.5625,
+          "seconds": 0.095952200000000001,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.1252315,
-          "clock_mhz": 1542.6875,
+          "seconds": 0.072229000000000002,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.073629200000000006,
-          "clock_mhz": 1517.5625,
+          "seconds": 0.064625799999999997,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.15215400000000001,
-          "clock_mhz": 1592.9375,
+          "seconds": 0.058261899999999998,
+          "clock_mhz": 1706,
           "throttled": false
         },
         {
-          "seconds": 0.1415961,
-          "clock_mhz": 1567.8125,
+          "seconds": 0.082090399999999994,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.057260600000000002,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.087327500000000002,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.095625399999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.077712900000000001,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.1067901,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.072165699999999999,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.069397600000000004,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.065212400000000004,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.076156500000000002,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.059459400000000003,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.072816599999999995,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.070642200000000002,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.076390799999999995,
+          "clock_mhz": 1706,
+          "throttled": false
+        },
+        {
+          "seconds": 0.058247599999999997,
+          "clock_mhz": 1706,
           "throttled": false
         }
       ]

@@ -3,6 +3,7 @@
 
 #include <thunderbolt/api/TaskDesc.hpp>
 #include <thunderbolt/api/TaskHandle.hpp>
+#include <thunderbolt/core/ShardedCounter.hpp>
 #include <thunderbolt/core/task/Task.hpp>
 
 #include <atomic>
@@ -74,19 +75,19 @@ public:
     // guess into a measurement, and they stay so the next claim about it can be
     // checked the same way.
     [[nodiscard]] std::uint64_t acquire_count() const noexcept {
-        return acquire_count_.load(std::memory_order_relaxed);
+        return acquire_count_.unsigned_sum();
     }
     [[nodiscard]] std::uint64_t release_count() const noexcept {
-        return release_count_.load(std::memory_order_relaxed);
+        return release_count_.unsigned_sum();
     }
     [[nodiscard]] std::uint64_t contended_lock_count() const noexcept {
-        return contended_locks_.load(std::memory_order_relaxed);
+        return contended_locks_.unsigned_sum();
     }
     // Times a shard was empty and another had to be searched. Persistent
     // non-zero values mean slots are pooling unevenly and the shard count or
     // assignment needs revisiting.
     [[nodiscard]] std::uint64_t shard_miss_count() const noexcept {
-        return shard_misses_.load(std::memory_order_relaxed);
+        return shard_misses_.unsigned_sum();
     }
 
 private:
@@ -101,6 +102,8 @@ private:
 
     // Shard this thread should prefer. Stable per thread, so a worker keeps
     // returning to the same sublist and its slots stay warm in that core's cache.
+    // Delegates to the runtime-wide thread_slot() rather than keeping a second
+    // independent scheme.
     [[nodiscard]] static std::uint32_t preferred_shard() noexcept;
 
     // Locks `shard`, counting the acquisition as contended when it could not be
@@ -115,10 +118,13 @@ private:
 
     std::unique_ptr<Shard[]> shards_;
 
-    mutable std::atomic<std::uint64_t> acquire_count_{0};
-    mutable std::atomic<std::uint64_t> release_count_{0};
-    mutable std::atomic<std::uint64_t> contended_locks_{0};
-    mutable std::atomic<std::uint64_t> shard_misses_{0};
+    // Sharded: written on every acquire and release, read only by tests and
+    // reports. As single atomics these four shared one cache line and were hit
+    // twice per task by every worker.
+    mutable ShardedCounter acquire_count_;
+    mutable ShardedCounter release_count_;
+    mutable ShardedCounter contended_locks_;
+    mutable ShardedCounter shard_misses_;
 };
 
 } // namespace thunderbolt

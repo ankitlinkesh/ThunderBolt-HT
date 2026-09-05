@@ -59,20 +59,22 @@ one task. 20 repetitions, interleaved, median:
 
 | leg | per-task cost | R² |
 |---|---|---|
-| standard | 5191 ns | 0.998 |
-| **thunderbolt** | **1282 ns** | 0.999 |
-| taskflow, explicit tasks | 891 ns | 1.000 |
-| taskflow, native `for_each` | *fit rejected* | 0.034 |
+| standard | 3627-4031 ns | 0.997 |
+| **thunderbolt** | **597-633 ns** | 0.998 |
+| taskflow, explicit tasks | 643 ns | 0.999 |
+| taskflow, native `for_each` | *fit rejected* | 0.26 |
 
-**Thunderbolt is ~1.44× behind Taskflow** and ~4× cheaper per task than this project's own
-baseline. An earlier version of this table said 2.4× behind — that comparison timed Taskflow's
-*execution* but not its *task creation*, while timing both for Thunderbolt. See
-[docs/RESULTS.md](docs/RESULTS.md) for the correction.
+**Thunderbolt is now faster per task than Taskflow's like-for-like leg** — 597-633 ns against
+643 ns, reproduced in two independent interleaved runs.
 
-Four hypotheses for the remaining gap have been tested and **all four refuted** — free-list
-contention, task footprint, and two barrier optimisations. The rest is plausibly structural:
-Thunderbolt carries generation-checked handles, a state machine, five priority levels and aging
-that Taskflow's explicit path does not.
+Getting there took five hypotheses, four of which were wrong. The cause was not any single
+expensive operation but **cache-line contention**: five global atomic counters per task, packed
+into one 64-byte line, ping-ponging across eight cores. Sharding the four that are only ever
+*reported*, and isolating the fifth on its own line, roughly halved per-task cost. See
+[docs/RESULTS.md](docs/RESULTS.md).
+
+This did **not** close the gap on the frame graph — the simulation still trails Taskflow, because
+it issues only ~150 tasks per tick and is dominated by stage barriers rather than per-task cost.
 
 The crossover — where decomposing further costs more than it buys — sits near **1000 tasks** for
 this workload on this machine. That answers §59.6 and §59.7 directly, and needed no game.

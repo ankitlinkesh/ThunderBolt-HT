@@ -118,7 +118,7 @@ TaskHandle RuntimeBase::submit_after(TaskDesc desc, const TaskHandle* dependenci
 
     for (std::size_t i = 0; i < dependency_count; ++i) {
         const TaskHandle dependency = dependencies[i];
-        dependency_edges_.fetch_add(1, std::memory_order_relaxed);
+        dependency_edges_.increment();
 
         Task* predecessor = pool_.get(dependency);
 
@@ -129,7 +129,7 @@ TaskHandle RuntimeBase::submit_after(TaskDesc desc, const TaskHandle* dependenci
             predecessor->try_add_successor(handle, dependency.generation);
 
         if (!registered) {
-            dependencies_pre_satisfied_.fetch_add(1, std::memory_order_relaxed);
+            dependencies_pre_satisfied_.increment();
             task->pending_dependencies.fetch_sub(1, std::memory_order_acq_rel);
         }
     }
@@ -145,7 +145,7 @@ TaskHandle RuntimeBase::submit_after(TaskDesc desc, const TaskHandle* dependenci
 }
 
 void RuntimeBase::run_inline(TaskDesc&& desc) {
-    inline_executions_.fetch_add(1, std::memory_order_relaxed);
+    inline_executions_.increment();
 
     std::uint32_t worker_index = TaskContext::kExternalThread;
     (void)on_own_worker(worker_index);
@@ -236,7 +236,7 @@ void RuntimeBase::complete(TaskHandle handle) {
     }
     successors.clear();
 
-    completed_.fetch_add(1, std::memory_order_relaxed);
+    completed_.increment();
 
     // A seq_cst read-modify-write is itself a full barrier, so when this
     // optimisation is on the standalone fence below is redundant rather than
