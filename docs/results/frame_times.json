@@ -1,0 +1,69 @@
+{
+  "schema": "thunderbolt-benchmark-1",
+  "benchmark": "frame_time_distribution",
+  "environment": {
+    "cpu": "Intel(R) Core(TM) i5-10310U CPU @ 1.70GHz",
+    "physical_cores": 4,
+    "logical_processors": 8,
+    "smt": true,
+    "ram_bytes": 17018630144,
+    "os": "Windows 10.0 build 26200",
+    "compiler": "MSVC 195136243",
+    "build_config": "Release",
+    "thunderbolt_version": "0.1.0",
+    "debug_assertions": false,
+    "address_sanitizer": false,
+    "timestamp_utc": "2026-09-05T09:41:39Z"
+  },
+  "scene": "stress",
+  "ticks": 2000,
+  "workers": 8,
+  "affinity": "disabled",
+  "note": "Percentiles are over INDIVIDUAL TICKS, not run medians. The '1% low fps' column is the reciprocal of the 99th-percentile tick time - the frame rate the worst 1% of ticks sustain, not an average of them.",
+  "legs": [
+    {
+      "leg": "serial",
+      "tick_count": 2000,
+      "median_ms": 0.61729999999999996,
+      "p95_ms": 1.3481150000000002,
+      "p99_ms": 2.0258020000000001,
+      "p999_ms": 2.2802056999999998,
+      "worst_ms": 2.4169999999999998,
+      "one_percent_low_fps": 493.63165798039489,
+      "p99_over_median": 3.2817139154381989
+    },
+    {
+      "leg": "standard",
+      "tick_count": 2000,
+      "median_ms": 0.57355,
+      "p95_ms": 0.65280499999999997,
+      "p99_ms": 0.70750999999999997,
+      "p999_ms": 1.2427722999999888,
+      "worst_ms": 1.8372999999999999,
+      "one_percent_low_fps": 1413.4075843450976,
+      "p99_over_median": 1.2335628977421322
+    },
+    {
+      "leg": "thunderbolt",
+      "tick_count": 2000,
+      "median_ms": 0.2878,
+      "p95_ms": 0.37461999999999995,
+      "p99_ms": 0.47220699999999999,
+      "p999_ms": 0.79479359999999777,
+      "worst_ms": 0.90490000000000004,
+      "one_percent_low_fps": 2117.7153239998561,
+      "p99_over_median": 1.6407470465601111
+    },
+    {
+      "leg": "taskflow",
+      "tick_count": 2000,
+      "median_ms": 0.17000000000000001,
+      "p95_ms": 0.2369,
+      "p99_ms": 0.28539999999999999,
+      "p999_ms": 0.45660259999999997,
+      "worst_ms": 0.59829999999999994,
+      "one_percent_low_fps": 3503.8542396636303,
+      "p99_over_median": 1.6788235294117646
+    }
+  ]
+}

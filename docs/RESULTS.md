@@ -1,8 +1,7 @@
 # Thunderbolt HT — Results
 
-Answers to the §59 research questions, from measurements on this machine. Four of the eight are
-answered, one partially, three are open. The open ones are listed as open rather than argued
-around.
+Answers to the §59 research questions, from measurements on this machine. **Six of the eight are
+answered; two are open.** The open ones are listed as open rather than argued around.
 
 > §94 asks *when* Thunderbolt outperforms conventional execution, *why*, and *where it fails to
 > scale* — and says that matters more than a speedup claim. This document is organised around
@@ -84,18 +83,34 @@ Below ~1000 tasks the workload dominates; above it, scheduling does. Thunderbolt
 per task than this project's own baseline and **2.4× more expensive than Taskflow** on the
 like-for-like comparison.
 
-## §59.4 — Does CPU topology awareness improve throughput? *(partial)*
+## §59.4 — Does CPU topology awareness improve throughput?
 
-Topology detection is real and verified on hardware — 4 physical / 8 logical, with SMT siblings
+**Detection: yes. Pinning: no — it costs ~12%.**
+
+Topology detection is real and verified on hardware — 4 physical / 8 logical, SMT siblings
 correctly paired (0,1)(2,3)(4,5)(6,7). That pairing is load-bearing: naive `0,1,2,3` affinity
 would put a two-worker run on one core's two hyperthreads and measure half the throughput it
 should.
 
-Affinity is implemented and **off by default**, per §17's warning that the OS scheduler may beat
-naive pinning. **It has not been benchmarked both ways.** The detection half is answered; the
-throughput half is not.
+Pinning itself loses (`docs/results/affinity.json`, `stress`, 8 workers, 20 reps, interleaved):
 
-## Open: §59.3, §59.5, §59.8
+| leg | ms/tick | IQR |
+|---|---|---|
+| thunderbolt (OS placement) | 0.882 | 0.160 |
+| thunderbolt_pinned (topology-aware) | 0.991 | 0.275 |
+
+Pinning is **12% slower and more variable**. §17 predicted this and the measurement confirms it:
+on a 15 W part the OS migrates threads partly to spread heat, and forbidding that costs more in
+throttling than it recovers in cache locality. Affinity stays off by default — now for a measured
+reason rather than a cautious one.
+
+**A methodology note that nearly cost the answer.** The first attempt measured pinned and
+unpinned in two *separate* runs and got contradictory results — one invocation said pinning was
+40% faster, another said 9% slower. That is the batched-comparison bias the harness exists to
+prevent, reintroduced by hand. Affinity is now a *leg* inside one interleaved run, and two
+independent runs then agreed on both direction and magnitude.
+
+## Open: §59.3 and §59.5
 
 - **§59.3 — Can adaptive task batching reduce scheduler overhead?** Not implemented. §95.10 says
   prefer simple mechanisms until measurement justifies complexity, and no measurement here does
@@ -104,9 +119,33 @@ throughput half is not.
 - **§59.5 — Does execution history improve scheduling decisions?** Not implemented, for the same
   reason. §12's Mode 5 caveat ("do not implement ML merely for marketing") applies with equal
   force to EWMA cost prediction.
-- **§59.8 — Frame-time variance and 1% lows?** **Not measured.** The harness reports IQR across
-  *run medians*, not the distribution of individual frame times. Answering this needs per-tick
-  timing capture, which does not exist. Nothing here supports a claim about 1% lows.
+## §59.8 — How does Thunderbolt affect frame-time variance and 1% lows?
+
+**It improves the absolute tail substantially, and worsens *relative* consistency.**
+
+Per-tick distribution over 2000 individual ticks (`docs/results/frame_times.json`), `stress`,
+8 workers. The "1% low fps" column is the reciprocal of the 99th-percentile tick time — the rate
+the worst 1% of ticks sustain:
+
+| leg | median ms | p99 ms | worst ms | 1% low fps | **p99 / median** |
+|---|---|---|---|---|---|
+| serial | 0.617 | 2.026 | 2.417 | 494 | 3.28× |
+| standard | 0.574 | 0.708 | 1.837 | 1413 | **1.23×** |
+| thunderbolt | 0.288 | 0.472 | 0.905 | 2118 | 1.64× |
+| taskflow | 0.170 | 0.285 | 0.598 | 3504 | 1.68× |
+
+Thunderbolt's 1% low is **1.5× better than the baseline's** in absolute terms, which is the number
+that matters for hitting a frame budget.
+
+But the ratio column says something an average would hide: **StandardRuntime has the tightest tail
+of any parallel leg** (1.23× versus 1.64×). A single shared queue is more *predictable* precisely
+because it does less — every task takes the same path, with no stealing, no victim search and no
+parking. Work stealing buys a much better median and pays for it in consistency. Taskflow shows
+the same ratio (1.68×), so this is a property of work stealing rather than of this implementation.
+
+For a real-time system that trade is worth stating explicitly: if a workload needed the most
+*predictable* frame time rather than the fastest, the simple queue is the better choice, and the
+absolute numbers here are what would settle it.
 
 ---
 

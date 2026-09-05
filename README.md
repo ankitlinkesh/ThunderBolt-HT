@@ -25,7 +25,7 @@ describes the design, and this section describes what actually exists today.
 | Profiler counters, benchmark harness, first results | ✅ built and measured |
 | Headless deterministic simulation | ✅ built and verified |
 | Scheduler modes (static / stealing / aging) | ✅ built and measured |
-| Results report answering the §59 questions | ✅ [docs/RESULTS.md](docs/RESULTS.md) |
+| Results report — 6 of 8 §59 questions answered | ✅ [docs/RESULTS.md](docs/RESULTS.md) |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
 119 unit tests pass under Debug, Release and AddressSanitizer. **28 of them are conformance
@@ -192,10 +192,12 @@ also produce a different hash, or the check would pass while proving nothing.
 
 ### What is still NOT measured
 
+- **No timeline profiler (§54).** Only aggregate counters; there is no per-task span capture, which
+  is the tool most likely to explain the remaining 2.4× gap to Taskflow.
+- **oneTBB was not added.** Taskflow already serves as the external reference and a second heavy
+  dependency would add build cost for little extra insight. A deliberate omission, not an oversight.
 - **The workload-weight gate is advisory.** `T₁` is emitted and a warning printed for a scene
   too cheap to be a scheduling benchmark, but nothing refuses to print the speedup.
-- No timeline profiler (§54) yet — only aggregate counters.
-- oneTBB has not been added; the external reference is Taskflow alone.
 - Per-task cost is still ~4× an industrial scheduler on the synthetic benchmark, and the cause is
   not yet identified. The pool-mutex hypothesis was disproved; memory footprint is untested.
 

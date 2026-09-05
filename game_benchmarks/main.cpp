@@ -59,6 +59,10 @@ void print_usage() {
         "  --reps N         Measured repetitions per leg (default 8)\n"
         "  --warmup N       Discarded warmup rounds (default 2)\n"
         "  --out PATH       Write the results document here\n"
+        "  --frame-times    Report the per-tick DISTRIBUTION (median/p99/1pct low) instead\n"
+        "                   of run medians. Answers S59.8; the A/B path cannot.\n"
+        "  --affinity       Pin workers to logical processors (S17: off by default,\n"
+        "                   because the OS scheduler may beat naive pinning)\n"
         "\n"
         "Without --ab this times a SINGLE run, which on this hardware varies by\n"
         "tens of percent between identical runs. Use --ab for anything quotable:\n"
@@ -99,6 +103,8 @@ int main(int argc, char** argv) {
     int                      reps        = 8;
     int                      warmup      = 2;
     std::string              output_path;
+    bool                     frame_times = false;
+    bool                     affinity_on = false;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg  = argv[i];
@@ -159,6 +165,10 @@ int main(int argc, char** argv) {
             unsigned long long value = 0;
             if (!parse_uint(argv[++i], value)) { return 2; }
             warmup = static_cast<int>(value);
+        } else if (std::strcmp(arg, "--frame-times") == 0) {
+            frame_times = true;
+        } else if (std::strcmp(arg, "--affinity") == 0) {
+            affinity_on = true;
         } else if (std::strcmp(arg, "--out") == 0 && more) {
             output_path = argv[++i];
         } else {
@@ -187,6 +197,11 @@ int main(int argc, char** argv) {
         bench.repetitions = reps;
         bench.warmup      = warmup;
         bench.output_path = output_path;
+        bench.affinity    = affinity_on ? thunderbolt::AffinityMode::TopologyAware
+                                        : thunderbolt::AffinityMode::Disabled;
+        if (frame_times) {
+            return run_frame_time_study(bench);
+        }
         return run_simulation_benchmark(bench);
     }
 
