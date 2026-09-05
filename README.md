@@ -103,38 +103,48 @@ benchmark target only) so the strongest claim in the project is checked against 
 scheduler rather than only against our own baseline. Both graphs produce an identical determinism
 hash, which is what proves they express the same dependencies.
 
-`stress` scene (500 vehicles, 2000 NPCs, 40 aircraft), 200 ticks, 8 workers, five samples per leg
-run **interleaved A/B/A/B** with a fresh process per sample, median reported:
+`stress` scene (500 vehicles, 2000 NPCs, 40 aircraft), 200 ticks, 8 workers, run through the
+**same harness** as the synthetic benchmarks — interleaved A/B/A/B, warmup discarded, median and
+IQR, throttle flagging, and a check that every leg produced the same world state:
 
-| config | ms/tick | vs serial | observed spread |
+```
+thunderbolt-sim --scene stress --ticks 200 -w 8                 --ab serial,standard,thunderbolt,taskflow --reps 6 --out sim.json
+```
+
+| leg | ms/tick | IQR | vs serial |
 |---|---|---|---|
-| serial | 0.933 | 1.00× | 55% |
-| standard | 0.920 | 1.01× | 13% |
-| thunderbolt | 0.518 | 1.80× | 62% |
-| **taskflow** | **0.412** | **2.26×** | 45% |
+| serial | 1.693 | 0.025 | 1.00× |
+| standard | 1.429 | 0.203 | 1.18× |
+| thunderbolt | 0.886 | 0.039 | 1.91× |
+| **taskflow** | **0.672** | 0.078 | **2.52×** |
 
-Three things this says, in order of importance:
-
-**Taskflow is ~1.26× faster than Thunderbolt here.** Much closer than the ~4× gap on the synthetic
-benchmark, but still ahead. Thunderbolt is a credible scheduler on a realistic frame graph and is
+**Taskflow is ~1.32× faster than Thunderbolt** on a realistic frame graph. Much closer than the
+~4× gap on the synthetic benchmark, but still ahead: Thunderbolt is a credible scheduler here and
 not yet a competitive one.
 
-**StandardRuntime gains essentially nothing from 8 workers** — 0.920 ms against 0.933 ms serial.
-Its single mutex-guarded queue absorbs the whole benefit at this task rate. That is the clearest
-evidence yet for per-worker deques, and it is why the earlier synthetic scaling run only showed
-Thunderbolt pulling ahead past 4 workers.
+**StandardRuntime gets only 1.18× from 8 workers.** Its single mutex-guarded queue absorbs almost
+the entire benefit. That is the clearest evidence in the project for per-worker deques, and it
+matches the synthetic scaling run where Thunderbolt only pulled ahead past 4 workers.
 
-**The measurement spread is 13–62%, and that is a problem with the harness, not the runtimes.**
-`thunderbolt-sim` does single-shot timing: it has no repetitions, no interleaving and no throttle
-flagging, none of which it inherits from `thunderbolt-bench`. The interleaving above was done at
-the shell level. **An earlier version of this README quoted a "2.2× faster at 8 workers" figure
-from single runs; with this much spread that claim was not adequately supported and has been
-replaced by the medians above.** Wiring the sim through the real harness is the next fix.
+Absolute figures move between sessions with the machine's thermal state; the *ratios* are what
+interleaving makes trustworthy, and they hold across runs.
 
-A related caveat: `full_mixed` turns out to be too cheap to be a good scheduling benchmark — its
-serial tick is a few hundred microseconds against roughly 150 tasks, so per-tick scheduling is a
-large fraction of the total. `stress` is the honest scene for this comparison. This is exactly the
-workload-weight gate the methodology calls for, and it is currently advisory rather than enforced.
+### Two measurement bugs this found
+
+Routing the simulation through the harness fixed one problem and exposed another.
+
+**The simulation had its own measurement path.** `thunderbolt-sim` timed a single run with one
+stopwatch call, inheriting none of the repetition, interleaving or throttle flagging the harness
+implements — because the harness was private to the other benchmark binary. Measured spread was
+**13–62%**, and a "2.2× faster" figure was published from it before that was noticed. The harness
+is now a shared library and both binaries use it; spread on the same workload is now 1.5–14%.
+
+**Throttle flagging was measuring the wrong thing.** It compared each sample against 80% of the
+CPU's *nominal maximum* clock — and on this 15 W part every sustained multicore sample sits near
+1600 MHz against a 2208 MHz maximum, so **100% of samples were flagged** and the signal was
+useless. That is not throttling; it is simply the all-core clock the chip can hold. What actually
+biases an A/B is a sample slower than *its peers*, so flagging is now relative to the median clock
+observed across the run.
 
 ### Determinism: the correctness proof
 
@@ -154,11 +164,8 @@ also produce a different hash, or the check would pass while proving nothing.
 
 ### What is still NOT measured
 
-- **`thunderbolt-sim` does not use the benchmark harness.** Single-shot timings, no repetitions,
-  no interleaving, no throttle flagging. Simulation numbers are correspondingly weaker than the
-  synthetic ones and should be read as medians of manually interleaved runs.
-- **The workload-weight gate is advisory.** `T₁` is emitted, but nothing refuses to print a
-  speedup for a scene too cheap to be CPU-bound.
+- **The workload-weight gate is advisory.** `T₁` is emitted and a warning printed for a scene
+  too cheap to be a scheduling benchmark, but nothing refuses to print the speedup.
 - No timeline profiler (§54) yet — only aggregate counters.
 - oneTBB has not been added; the external reference is Taskflow alone.
 - Per-task cost is still ~4× an industrial scheduler on the synthetic benchmark, and the cause is

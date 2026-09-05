@@ -10,6 +10,7 @@
 //
 //   default  Time the tick loop, so the same workload can be compared across
 //            runtimes with everything else held constant (S94).
+#include "SimBenchmark.hpp"
 #include "TaskflowSim.hpp"
 
 #include <engine/core/Simulation.hpp>
@@ -52,6 +53,18 @@ void print_usage() {
         "  --hash           Print the state hash and exit; implies a quiet run\n"
         "  --list-scenes    List the available scenes\n"
         "\n"
+        "A/B mode (recommended for any timing claim):\n"
+        "  --ab LIST        Comma-separated legs to compare, e.g.\n"
+        "                   serial,standard,thunderbolt,taskflow\n"
+        "  --reps N         Measured repetitions per leg (default 8)\n"
+        "  --warmup N       Discarded warmup rounds (default 2)\n"
+        "  --out PATH       Write the results document here\n"
+        "\n"
+        "Without --ab this times a SINGLE run, which on this hardware varies by\n"
+        "tens of percent between identical runs. Use --ab for anything quotable:\n"
+        "it interleaves the legs, discards warmup, reports median and IQR, flags\n"
+        "throttled samples, and verifies every leg produced the same world state.\n"
+        "\n"
         "The hash is the correctness proof. It must be identical for a given seed\n"
         "across runtimes and across worker counts:\n"
         "\n"
@@ -82,6 +95,10 @@ int main(int argc, char** argv) {
     std::uint64_t ticks   = 600;
     std::uint32_t workers = 0;
     bool          hash_only = false;
+    std::vector<std::string> ab_legs;
+    int                      reps        = 8;
+    int                      warmup      = 2;
+    std::string              output_path;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg  = argv[i];
@@ -118,6 +135,32 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "error: --ticks needs a number\n");
                 return 2;
             }
+        } else if (std::strcmp(arg, "--ab") == 0 && more) {
+            ab_legs.clear();
+            std::string list = argv[++i];
+            std::size_t start = 0;
+            while (start <= list.size()) {
+                const std::size_t comma = list.find(',', start);
+                const std::string leg =
+                    list.substr(start, (comma == std::string::npos) ? comma : comma - start);
+                if (!leg.empty()) {
+                    ab_legs.push_back(leg);
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                start = comma + 1;
+            }
+        } else if (std::strcmp(arg, "--reps") == 0 && more) {
+            unsigned long long value = 0;
+            if (!parse_uint(argv[++i], value)) { return 2; }
+            reps = static_cast<int>(value);
+        } else if (std::strcmp(arg, "--warmup") == 0 && more) {
+            unsigned long long value = 0;
+            if (!parse_uint(argv[++i], value)) { return 2; }
+            warmup = static_cast<int>(value);
+        } else if (std::strcmp(arg, "--out") == 0 && more) {
+            output_path = argv[++i];
         } else {
             std::fprintf(stderr, "error: unknown argument '%s'\n\n", arg);
             print_usage();
@@ -130,6 +173,21 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "error: unknown scene '%s'\n\n", scene_name.c_str());
         list_scenes();
         return 2;
+    }
+
+    // A/B mode goes through the real harness. The single-run path below stays
+    // for --hash and for quick eyeballing, and its output is not quotable.
+    if (!ab_legs.empty()) {
+        SimBenchmarkOptions bench;
+        bench.scene       = *scene;
+        bench.seed        = seed;
+        bench.ticks       = ticks;
+        bench.workers     = workers;
+        bench.legs        = ab_legs;
+        bench.repetitions = reps;
+        bench.warmup      = warmup;
+        bench.output_path = output_path;
+        return run_simulation_benchmark(bench);
     }
 
     Simulation simulation(*scene, seed);

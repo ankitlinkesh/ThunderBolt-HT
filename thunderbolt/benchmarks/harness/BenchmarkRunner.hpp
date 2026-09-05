@@ -90,16 +90,25 @@ struct RunOptions {
     // Between samples, so heat from one leg does not land on the next.
     std::chrono::milliseconds cooldown{25};
 
-    // A sample whose observed clock falls below this fraction of the nominal
-    // maximum is flagged as throttled. 0.80 rather than something tighter because
-    // a mobile part rarely sits at its nominal peak even when healthy.
-    double throttle_fraction = 0.80;
+    // A sample is flagged as throttled when its observed clock falls below this
+    // fraction of the MEDIAN clock observed across the run.
+    //
+    // Relative, not absolute. A fixed fraction of the nominal maximum flags every
+    // sustained multicore sample on a mobile part - measured at 100% of samples
+    // on the reference machine - which conveys nothing. What biases an A/B is a
+    // sample that ran slower than its peers, and 0.92 catches that without
+    // reacting to ordinary jitter.
+    double throttle_fraction = 0.92;
 };
 
 struct RunReport {
     std::vector<LegResult> legs;
     RunOptions             options;
     double                 nominal_max_mhz = 0.0;
+
+    // Median clock actually observed across the run. This, not the nominal
+    // maximum, is what throttle flagging is measured against.
+    double median_observed_mhz = 0.0;
 
     // True when frequency could not be read at all, in which case no claim about
     // throttling should be made in either direction.

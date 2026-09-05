@@ -47,16 +47,40 @@ if(THUNDERBOLT_REFERENCE_RUNTIMES)
     endif()
 endif()
 
-add_executable(thunderbolt_bench
-    main.cpp
+# The measurement protocol, as a library.
+#
+# Extracted so the SIMULATION driver can use it too. It was previously private to
+# this executable, and the result was a second measurement path in
+# game_benchmarks/ that did single-shot timing with no repetitions, no
+# interleaving and no throttle flagging - reporting numbers with 13-62% spread as
+# if they were results. A harness that only one of two benchmark binaries uses is
+# not a harness.
+#
+# It depends on thunderbolt/ only, never on engine/, so linking it into the
+# simulation does not create a back-edge in the layering.
+add_library(thunderbolt_bench_harness STATIC
     harness/BenchmarkRunner.cpp
     harness/Environment.cpp
     harness/ResultWriter.cpp
+)
+target_include_directories(thunderbolt_bench_harness PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>")
+target_link_libraries(thunderbolt_bench_harness PUBLIC thunderbolt thunderbolt::flags)
+set_target_properties(thunderbolt_bench_harness PROPERTIES CXX_EXTENSIONS OFF)
+
+if(WIN32)
+    # CallNtPowerInformation, for observing the actual clock frequency.
+    target_link_libraries(thunderbolt_bench_harness PUBLIC PowrProf)
+endif()
+
+add_executable(thunderbolt_bench
+    main.cpp
     experiments/Granularity.cpp
     experiments/Scaling.cpp
 )
 
-target_link_libraries(thunderbolt_bench PRIVATE thunderbolt thunderbolt::flags)
+target_link_libraries(thunderbolt_bench PRIVATE
+    thunderbolt_bench_harness thunderbolt thunderbolt::flags)
 set_target_properties(thunderbolt_bench PROPERTIES
     CXX_EXTENSIONS OFF
     OUTPUT_NAME "thunderbolt-bench"
@@ -70,8 +94,4 @@ if(THUNDERBOLT_HAVE_TASKFLOW)
     )
 endif()
 
-if(WIN32)
-    # CallNtPowerInformation, used to observe the actual clock frequency so that
-    # thermally throttled samples are visible rather than silently averaged in.
-    target_link_libraries(thunderbolt_bench PRIVATE PowrProf)
-endif()
+

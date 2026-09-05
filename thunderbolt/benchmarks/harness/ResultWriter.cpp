@@ -105,6 +105,11 @@ void begin_result_document(JsonWriter& json, std::string_view benchmark_name,
 
     json.begin_object("clock");
     json.field("nominal_max_mhz", report.nominal_max_mhz);
+    // The reference for throttle flagging. A mobile part never holds its nominal
+    // maximum under all-core load, so the useful question is whether a sample was
+    // slow RELATIVE TO ITS PEERS.
+    json.field("median_observed_mhz", report.median_observed_mhz);
+    json.field("throttle_reference", "median_observed_mhz");
     // When frequency is unreadable, no claim may be made in either direction -
     // "not throttled" and "throttled" are equally unsupported.
     json.field("available", !report.clock_unavailable);
