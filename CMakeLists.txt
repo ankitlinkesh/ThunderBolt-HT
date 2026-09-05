@@ -36,6 +36,9 @@ add_subdirectory(thunderbolt)
 
 # The simulation that exercises the runtime. One-way dependency: engine/ may use
 # thunderbolt/, never the reverse.
+#
+# Order matters: thunderbolt/ resolves the optional Taskflow dependency, and
+# game_benchmarks/ consumes the variables it sets.
 add_subdirectory(engine)
 add_subdirectory(game_benchmarks)
 

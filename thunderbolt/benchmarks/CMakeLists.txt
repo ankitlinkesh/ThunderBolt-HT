@@ -36,6 +36,11 @@ if(THUNDERBOLT_REFERENCE_RUNTIMES)
     FetchContent_MakeAvailable(taskflow)
     if(EXISTS "${taskflow_SOURCE_DIR}/taskflow/taskflow.hpp")
         set(THUNDERBOLT_HAVE_TASKFLOW ON)
+        # CACHE INTERNAL so game_benchmarks/ can see them too: the simulation needs
+        # the same reference leg, and a directory-scoped variable would silently
+        # leave that target without one.
+        set(THUNDERBOLT_HAVE_TASKFLOW ON CACHE INTERNAL "Taskflow reference leg available")
+        set(taskflow_SOURCE_DIR "${taskflow_SOURCE_DIR}" CACHE INTERNAL "Taskflow headers")
         message(STATUS "Reference runtime: Taskflow v3.7.0 at ${taskflow_SOURCE_DIR}")
     else()
         message(WARNING "Taskflow headers not found; the reference leg will be absent")

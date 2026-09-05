@@ -10,8 +10,14 @@
 //
 //   default  Time the tick loop, so the same workload can be compared across
 //            runtimes with everything else held constant (S94).
+#include "TaskflowSim.hpp"
+
 #include <engine/core/Simulation.hpp>
 #include <engine/core/StateHash.hpp>
+
+#if THUNDERBOLT_HAVE_TASKFLOW
+#  include <taskflow/taskflow.hpp>
+#endif
 
 #include <thunderbolt/api/BuildInfo.hpp>
 #include <thunderbolt/cpu/topology/CpuTopology.hpp>
@@ -132,18 +138,44 @@ int main(int argc, char** argv) {
     config.worker_count  = workers;
     config.task_capacity = 262144;
 
+    const bool serial   = (runtime_name == "serial");
+    const bool taskflow = (runtime_name == "taskflow");
+
+#if !THUNDERBOLT_HAVE_TASKFLOW
+    if (taskflow) {
+        std::fprintf(stderr,
+                     "error: this build has no Taskflow reference leg.\n"
+                     "       Reconfigure with -DTHUNDERBOLT_REFERENCE_RUNTIMES=ON\n");
+        return 2;
+    }
+#endif
+
     std::unique_ptr<ITaskRuntime> runtime;
-    const bool                    serial = (runtime_name == "serial");
-    if (!serial) {
+    if (!serial && !taskflow) {
         if (runtime_name == "standard") {
             runtime = std::make_unique<StandardRuntime>(config);
         } else if (runtime_name == "thunderbolt") {
             runtime = std::make_unique<ThunderboltRuntime>(config);
         } else {
-            std::fprintf(stderr, "error: --runtime must be standard, thunderbolt or serial\n");
+            std::fprintf(stderr,
+                         "error: --runtime must be standard, thunderbolt, serial or taskflow\n");
             return 2;
         }
     }
+
+#if THUNDERBOLT_HAVE_TASKFLOW
+    // Worker count is held identical to the Thunderbolt legs. A reference leg
+    // given a different amount of hardware would not be a comparison.
+    const unsigned taskflow_workers =
+        (workers != 0) ? workers
+                       : (cpu_topology().logical_processor_count > 0
+                              ? cpu_topology().logical_processor_count
+                              : 1u);
+    std::unique_ptr<tf::Executor> executor;
+    if (taskflow) {
+        executor = std::make_unique<tf::Executor>(static_cast<std::size_t>(taskflow_workers));
+    }
+#endif
 
     if (!hash_only) {
         const auto& build = build_info();
@@ -154,8 +186,16 @@ int main(int argc, char** argv) {
                     scene->name, scene->vehicles, scene->npcs, scene->aircraft,
                     static_cast<unsigned long long>(seed),
                     static_cast<unsigned long long>(ticks));
-        std::printf("runtime=%s workers=%u\n\n", runtime_name.c_str(),
-                    serial ? 1u : runtime->worker_count());
+        unsigned reported_workers = 1u;
+        if (runtime) {
+            reported_workers = runtime->worker_count();
+        }
+#if THUNDERBOLT_HAVE_TASKFLOW
+        if (taskflow) {
+            reported_workers = taskflow_workers;
+        }
+#endif
+        std::printf("runtime=%s workers=%u\n\n", runtime_name.c_str(), reported_workers);
     }
 
     // Watchdog. The simulation is the first workload to exercise many-dependency
@@ -165,7 +205,8 @@ int main(int argc, char** argv) {
     // guessing and diagnosing.
     std::atomic<std::uint64_t> current_tick{0};
     std::atomic<bool>          finished{false};
-    std::thread watchdog([&current_tick, &finished, &runtime, serial] {
+    const bool watchdog_has_runtime = (runtime != nullptr);
+    std::thread watchdog([&current_tick, &finished, &runtime, watchdog_has_runtime] {
         for (int elapsed = 0; elapsed < 200 && !finished.load(std::memory_order_acquire);
              ++elapsed) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -173,7 +214,7 @@ int main(int argc, char** argv) {
         if (!finished.load(std::memory_order_acquire)) {
             std::fprintf(stderr, "\nWATCHDOG: stalled at tick %llu",
                          static_cast<unsigned long long>(current_tick.load()));
-            if (!serial) {
+            if (watchdog_has_runtime) {
                 std::fprintf(stderr, ", outstanding=%llu completed=%llu",
                              static_cast<unsigned long long>(
                                  static_cast<thunderbolt::RuntimeBase*>(runtime.get())
@@ -183,7 +224,7 @@ int main(int argc, char** argv) {
                                      ->completed_task_count()));
             }
             std::fprintf(stderr, "\n");
-            if (!serial) {
+            if (watchdog_has_runtime) {
                 static_cast<thunderbolt::RuntimeBase*>(runtime.get())->dump_outstanding();
             }
             std::fflush(stderr);
@@ -196,7 +237,13 @@ int main(int argc, char** argv) {
         current_tick.store(t, std::memory_order_release);
         if (serial) {
             simulation.tick_serial();
-        } else {
+        }
+#if THUNDERBOLT_HAVE_TASKFLOW
+        else if (taskflow) {
+            tick_with_taskflow(simulation, *executor);
+        }
+#endif
+        else {
             simulation.tick(*runtime);
         }
     }

@@ -98,26 +98,43 @@ engine/tyre/suspension model, NPCs with perception → decision → movement, an
 atmosphere → aerodynamics → propulsion → integration. Ten stages per tick across three
 concurrently-running chains, all state structure-of-arrays and double-buffered.
 
-Per-tick cost, `full_mixed` (250 vehicles, 1000 NPCs, 20 aircraft), 300 ticks:
+The **same ten-stage graph** is also expressed with Taskflow (`game_benchmarks/TaskflowSim.cpp`,
+benchmark target only) so the strongest claim in the project is checked against an industrial
+scheduler rather than only against our own baseline. Both graphs produce an identical determinism
+hash, which is what proves they express the same dependencies.
 
-| config | ms/tick |
-|---|---|
-| serial | 1.113 |
-| standard w=4 | 0.463 |
-| standard w=8 | **0.746** |
-| thunderbolt w=4 | 0.416 |
-| thunderbolt w=8 | **0.336** |
+`stress` scene (500 vehicles, 2000 NPCs, 40 aircraft), 200 ticks, 8 workers, five samples per leg
+run **interleaved A/B/A/B** with a fresh process per sample, median reported:
 
-**The baseline gets *slower* from 4 to 8 workers while Thunderbolt keeps improving** — 2.2×
-faster at 8. That is the clearest result the project has produced, and it has a mechanism:
-StandardRuntime funnels every task through one mutex-guarded queue, and once the machine is
-oversubscribed that queue is the bottleneck. Per-worker deques do not have that ceiling. It is
-also consistent with the earlier scaling benchmark, where Thunderbolt only pulled ahead past 4
-workers.
+| config | ms/tick | vs serial | observed spread |
+|---|---|---|---|
+| serial | 0.933 | 1.00× | 55% |
+| standard | 0.920 | 1.01× | 13% |
+| thunderbolt | 0.518 | 1.80× | 62% |
+| **taskflow** | **0.412** | **2.26×** | 45% |
 
-*Caveat:* `serial` is slower than `standard w=1`. That is not a scheduling result — with one
-worker the simulation runs on a dedicated thread while the main thread blocks, which the serial
-path does not get.
+Three things this says, in order of importance:
+
+**Taskflow is ~1.26× faster than Thunderbolt here.** Much closer than the ~4× gap on the synthetic
+benchmark, but still ahead. Thunderbolt is a credible scheduler on a realistic frame graph and is
+not yet a competitive one.
+
+**StandardRuntime gains essentially nothing from 8 workers** — 0.920 ms against 0.933 ms serial.
+Its single mutex-guarded queue absorbs the whole benefit at this task rate. That is the clearest
+evidence yet for per-worker deques, and it is why the earlier synthetic scaling run only showed
+Thunderbolt pulling ahead past 4 workers.
+
+**The measurement spread is 13–62%, and that is a problem with the harness, not the runtimes.**
+`thunderbolt-sim` does single-shot timing: it has no repetitions, no interleaving and no throttle
+flagging, none of which it inherits from `thunderbolt-bench`. The interleaving above was done at
+the shell level. **An earlier version of this README quoted a "2.2× faster at 8 workers" figure
+from single runs; with this much spread that claim was not adequately supported and has been
+replaced by the medians above.** Wiring the sim through the real harness is the next fix.
+
+A related caveat: `full_mixed` turns out to be too cheap to be a good scheduling benchmark — its
+serial tick is a few hundred microseconds against roughly 150 tasks, so per-tick scheduling is a
+large fraction of the total. `stress` is the honest scene for this comparison. This is exactly the
+workload-weight gate the methodology calls for, and it is currently advisory rather than enforced.
 
 ### Determinism: the correctness proof
 
@@ -137,9 +154,15 @@ also produce a different hash, or the check would pass while proving nothing.
 
 ### What is still NOT measured
 
+- **`thunderbolt-sim` does not use the benchmark harness.** Single-shot timings, no repetitions,
+  no interleaving, no throttle flagging. Simulation numbers are correspondingly weaker than the
+  synthetic ones and should be read as medians of manually interleaved runs.
+- **The workload-weight gate is advisory.** `T₁` is emitted, but nothing refuses to print a
+  speedup for a scene too cheap to be CPU-bound.
 - No timeline profiler (§54) yet — only aggregate counters.
-- No game workload. Everything above is synthetic and CPU-bound by construction.
 - oneTBB has not been added; the external reference is Taskflow alone.
+- Per-task cost is still ~4× an industrial scheduler on the synthetic benchmark, and the cause is
+  not yet identified. The pool-mutex hypothesis was disproved; memory footprint is untested.
 
 ---
 

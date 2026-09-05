@@ -51,6 +51,22 @@ public:
 
     [[nodiscard]] std::uint64_t state_hash() const;
 
+    // --- external scheduler support --------------------------------------
+    //
+    // Lets a scheduler that engine/ must not depend on - Taskflow, in the
+    // benchmark target - express the SAME frame graph over the same state. The
+    // alternative would be a tick_taskflow() here, which would drag a
+    // benchmark-only dependency into the engine and break the layering rule the
+    // architecture test enforces.
+    //
+    // The caller reads world().current(), writes next_state(), and calls
+    // finish_tick() exactly once when the frame's work has completed.
+    [[nodiscard]] WorldState& next_state() noexcept { return world_.next(); }
+    void                      finish_tick() noexcept {
+        world_.swap_buffers();
+        world_.advance_tick();
+    }
+
     [[nodiscard]] const World& world() const noexcept { return world_; }
     [[nodiscard]] const SceneSpec& scene() const noexcept { return scene_; }
     [[nodiscard]] const FrameStats& last_frame() const noexcept { return last_frame_; }
