@@ -60,6 +60,12 @@ public:
 
     [[nodiscard]] std::uint32_t capacity() const noexcept { return capacity_; }
 
+    // Raw slot access for diagnostics only. Bypasses the generation check on
+    // purpose: the point is to inspect slots whose handles no longer resolve.
+    [[nodiscard]] const Task* slot_for_diagnostics(std::uint32_t index) const noexcept {
+        return (index < capacity_) ? &slots_[index] : nullptr;
+    }
+
     // Slots currently acquired. For tests and profiling, not for scheduling.
     [[nodiscard]] std::uint32_t live_count() const;
 

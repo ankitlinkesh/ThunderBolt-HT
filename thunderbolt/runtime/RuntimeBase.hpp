@@ -75,6 +75,13 @@ public:
         return pool_.contended_lock_count();
     }
 
+    // Diagnostic: writes every task slot that is not free, with its lifecycle
+    // state and outstanding dependency count, to stderr. Distinguishes a task
+    // that never became runnable (still Waiting - a lost dependency decrement)
+    // from one that was made runnable but never picked up (Queued - a lost
+    // wakeup). Those need opposite fixes, so guessing between them is expensive.
+    void dump_outstanding() const;
+
 protected:
     explicit RuntimeBase(RuntimeConfig config);
     ~RuntimeBase() override = default;

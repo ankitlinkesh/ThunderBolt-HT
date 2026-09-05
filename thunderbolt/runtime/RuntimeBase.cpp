@@ -3,6 +3,7 @@
 #include <thunderbolt/cpu/topology/CpuTopology.hpp>
 
 #include <cassert>
+#include <cstdio>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -294,6 +295,25 @@ bool RuntimeBase::is_complete_internal(TaskHandle handle) const {
     }
 
     return state == TaskState::Completed;
+}
+
+void RuntimeBase::dump_outstanding() const {
+    static const char* kStateNames[] = {"Free",   "Created", "Waiting",   "Ready",
+                                        "Queued", "Claimed", "Executing", "Completed"};
+    std::fprintf(stderr, "  outstanding task slots:\n");
+    std::uint32_t shown = 0;
+    for (std::uint32_t i = 0; i < pool_.capacity() && shown < 32; ++i) {
+        const Task* task = pool_.slot_for_diagnostics(i);
+        const TaskState state = task->state.load(std::memory_order_acquire);
+        if (state == TaskState::Free) {
+            continue;
+        }
+        std::fprintf(stderr, "    slot %u  state=%s  pending_deps=%u  gen=%u\n", i,
+                     kStateNames[static_cast<std::size_t>(state)],
+                     task->pending_dependencies.load(std::memory_order_acquire),
+                     task->generation.load(std::memory_order_acquire));
+        ++shown;
+    }
 }
 
 bool RuntimeBase::is_complete(TaskHandle handle) const { return is_complete_internal(handle); }

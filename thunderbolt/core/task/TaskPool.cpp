@@ -90,6 +90,10 @@ TaskHandle TaskPool::acquire(TaskDesc&& desc) {
     task.estimated_cost = desc.estimated_cost;
     task.pending_dependencies.store(0, std::memory_order_relaxed);
 
+    // Opened only now, for a task that already has its new generation. A slot on
+    // the free list must refuse successor registrations; see reset_successors().
+    task.open_successors();
+
     const std::uint32_t generation = task.generation.load(std::memory_order_relaxed);
 
     // Release: everything written above must be visible to any thread that
@@ -112,15 +116,19 @@ void TaskPool::release(TaskHandle handle) {
     // be handed out again.
     task.function.reset();
 
-    // The successor list must already have been closed and drained by the
-    // completing thread; this returns it to a reusable state.
-    task.reset_successors();
+    // Advance the generation BEFORE touching the successor list. Both orderings
+    // matter and for different reasons:
+    //
+    //  - Before the free list, because once listed another thread may acquire the
+    //    slot, and a handle that still resolved then would resolve to someone
+    //    else's task.
+    //  - Before reset_successors(), because the reset used to reopen the list
+    //    while the generation was still old, letting a registration attach to a
+    //    task that had already drained its successors and would never notify it.
+    task.generation.fetch_add(1, std::memory_order_release);
 
-    // Advancing the generation is what invalidates every outstanding handle. It
-    // must happen BEFORE the slot goes back on a free list: once it is listed,
-    // another thread may acquire it, and a handle that still resolved at that
-    // moment would resolve to someone else's task.
-    task.generation.fetch_add(1, std::memory_order_relaxed);
+    // Returns the slot to a dormant, CLOSED state. It is reopened at acquire.
+    task.reset_successors();
     task.state.store(TaskState::Free, std::memory_order_release);
 
     release_count_.fetch_add(1, std::memory_order_relaxed);

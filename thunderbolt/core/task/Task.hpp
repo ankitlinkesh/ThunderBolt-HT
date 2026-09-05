@@ -102,8 +102,29 @@ struct alignas(kCacheLineSize) Task {
         unlock();
     }
 
-    // Returns the slot to a reusable state. Called by the pool on release.
+    // Returns the slot to a DORMANT state on release. The list stays CLOSED.
+    //
+    // This is the fix for a hang the simulation found. Reopening the list here
+    // left a window in which the slot had a drained successor list, a still-old
+    // generation, and closed_ == false - so a registration arriving in that window
+    // was accepted by a task that had already finished and would never notify it.
+    // The dependent then waited forever with pending_dependencies stuck at 1.
+    //
+    // A free slot has no successors and must accept none. It is reopened only by
+    // open_successors(), when the pool hands it to a genuinely new task with a new
+    // generation.
     void reset_successors() {
+        lock();
+        successors_closed_ = true;
+        successor_count_   = 0;
+        spilled_successors_.clear();
+        unlock();
+    }
+
+    // Opens the list for a newly acquired task. Called by the pool on acquire,
+    // after the generation has advanced, so no handle to the previous occupant
+    // can pass the generation check in try_add_successor().
+    void open_successors() {
         lock();
         successors_closed_ = false;
         successor_count_   = 0;

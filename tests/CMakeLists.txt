@@ -24,3 +24,13 @@ add_test(
             -P "${CMAKE_CURRENT_SOURCE_DIR}/check_standalone.cmake"
 )
 set_tests_properties(thunderbolt_builds_standalone PROPERTIES TIMEOUT 600)
+
+# The determinism harness. Substitutes for the ThreadSanitizer this toolchain
+# does not have: identical world state from identical input under every schedule.
+add_test(
+    NAME simulation_determinism
+    COMMAND "${CMAKE_COMMAND}"
+            -D "SIM=$<TARGET_FILE:thunderbolt_sim>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_determinism.cmake"
+)
+set_tests_properties(simulation_determinism PROPERTIES TIMEOUT 900)

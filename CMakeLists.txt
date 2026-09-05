@@ -34,9 +34,10 @@ endif()
 # The runtime. Self-contained; see thunderbolt/CMakeLists.txt.
 add_subdirectory(thunderbolt)
 
-# engine/, game/, tools/, benchmarks and the headless sim are added here as they
-# land (Phases E-F). They are intentionally absent rather than stubbed, so that a
-# missing directory is a build error rather than a silently empty target.
+# The simulation that exercises the runtime. One-way dependency: engine/ may use
+# thunderbolt/, never the reverse.
+add_subdirectory(engine)
+add_subdirectory(game_benchmarks)
 
 # Repo-level tests, including the guard that thunderbolt/ has not grown a
 # dependency on engine/ or game/.

@@ -12,7 +12,7 @@ together with a real-time simulation used as its flagship benchmark workload.
 
 ## Status
 
-**Phase E complete.** Read this section before any other — the rest of this document
+**Phase F complete.** Read this section before any other — the rest of this document
 describes the design, and this section describes what actually exists today.
 
 | | |
@@ -23,7 +23,7 @@ describes the design, and this section describes what actually exists today.
 | Worker pool, work-stealing deque, CPU topology | ✅ built and verified |
 | Task dependencies / task graph | ✅ built and verified |
 | Profiler counters, benchmark harness, first results | ✅ built and measured |
-| Headless deterministic simulation | ⬜ Phase F |
+| Headless deterministic simulation | ✅ built and verified |
 | Adaptive scheduling modes | ⬜ Phase G |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
@@ -90,6 +90,50 @@ The sharding was kept — it is strictly better and costs nothing — but it is 
 negative result rather than presented as an optimisation. The next candidate is memory
 footprint: `sizeof(Task)` is 192 bytes, so a 65 536-task live set spans ~12 MB against roughly
 6 MB of last-level cache. That is a hypothesis, not a finding.
+
+### The simulation workload, and the result it produced
+
+`thunderbolt-sim` runs a headless, fixed-timestep (60 Hz), seeded simulation: vehicles with an
+engine/tyre/suspension model, NPCs with perception → decision → movement, and aircraft with
+atmosphere → aerodynamics → propulsion → integration. Ten stages per tick across three
+concurrently-running chains, all state structure-of-arrays and double-buffered.
+
+Per-tick cost, `full_mixed` (250 vehicles, 1000 NPCs, 20 aircraft), 300 ticks:
+
+| config | ms/tick |
+|---|---|
+| serial | 1.113 |
+| standard w=4 | 0.463 |
+| standard w=8 | **0.746** |
+| thunderbolt w=4 | 0.416 |
+| thunderbolt w=8 | **0.336** |
+
+**The baseline gets *slower* from 4 to 8 workers while Thunderbolt keeps improving** — 2.2×
+faster at 8. That is the clearest result the project has produced, and it has a mechanism:
+StandardRuntime funnels every task through one mutex-guarded queue, and once the machine is
+oversubscribed that queue is the bottleneck. Per-worker deques do not have that ceiling. It is
+also consistent with the earlier scaling benchmark, where Thunderbolt only pulled ahead past 4
+workers.
+
+*Caveat:* `serial` is slower than `standard w=1`. That is not a scheduling result — with one
+worker the simulation runs on a dedicated thread while the main thread blocks, which the serial
+path does not get.
+
+### Determinism: the correctness proof
+
+The same seed produces a **bit-identical** world-state hash across serial, StandardRuntime
+(1/2/4/8 workers) and ThunderboltRuntime (1/2/4/8) — nine configurations, one hash. This runs as
+a ctest (`simulation_determinism`) and is the substitute for the unavailable ThreadSanitizer.
+
+It is not a formality. It **found a runtime deadlock that 113 unit tests had not**: releasing a
+task slot reopened its successor list *before* advancing the generation, so a dependency
+registered in that window attached to a task that had already finished and would never notify
+it. The dependent waited forever with `pending_dependencies` stuck at 1.
+
+The harness was itself verified by mutation. A change that shifts every configuration equally is
+correctly *not* flagged; introducing a genuine cross-batch read of the buffer a stage is
+concurrently writing **is** flagged, naming the diverging configuration. A different seed must
+also produce a different hash, or the check would pass while proving nothing.
 
 ### What is still NOT measured
 
