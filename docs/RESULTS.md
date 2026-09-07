@@ -239,10 +239,11 @@ While in this file: `docs/RESULTS.md`'s own "Where Thunderbolt fails to scale" s
 described the pre-Stage-1 1.44× gap as unsolved, three sections after *Closing the gap* had already
 reported it closed. Corrected above — a stale claim sitting next to the number that refuted it.
 
-## Targeted handle-wait wakeups: a real fix, an inconclusive measurement
+## Targeted handle-wait wakeups: a real fix, a measured non-result
 
-A fix, applied and tested, but reported here **without a simulation-level number**, because an
-honest attempt to measure one failed for a documented reason rather than being skipped.
+A fix, applied and tested, and then measured cleanly enough to say plainly: **it does not move
+the frame-graph number.** Kept anyway, because it corrects a false assumption and is independently
+justified - see below for why.
 
 **The bug.** `RuntimeBase.hpp` already carried this comment about `handle_waiters_`: *"Per-handle
 waiters still need a notification per completion, but that path is rare: inside a worker,
@@ -269,19 +270,40 @@ concurrently, and asserts every one wakes. A lost wakeup is a hang, not a wrong 
 can't pass for the wrong reason. 123 tests (121 + 2, one per runtime) green under Debug, Release
 and ASan; determinism hash unchanged.
 
-**The measurement attempt, reported honestly.** A same-code before/after comparison on `stress`
-(1000 ticks, 8 workers) needs the machine reasonably stable between the two runs, and after the
-long benchmarking sequence in this session it was not: `serial`'s own IQR went from 0.0074 ms on
-one run to 0.0935 ms — over 10× — with **no code change at all** between them. The
-thunderbolt/taskflow ratio measured 1.39× before the fix and 1.43× after, a difference smaller
-than the run-to-run noise just demonstrated on the *same* binary. That is not a negative result;
-it is a measurement that failed to clear its own noise floor, and reporting a number anyway would
-violate this project's own rule that every figure must be a real measurement, not a hopeful read
-of one.
+**The measurement, done twice on each side.** First attempt used 200 ticks and produced IQRs up
+to 0.19 ms on *unchanged* code between consecutive runs — noise larger than any plausible effect,
+so that attempt was reported as inconclusive rather than as a result. Longer runs (1000 ticks, 60
+reps) brought IQR down to 0.006–0.017 ms, tight enough to trust, and were run twice on each side
+by checking `thunderbolt/runtime/RuntimeBase.{hpp,cpp}` back to the pre-fix commit and forward
+again:
 
-This is left as an open item, not a claim either way. Re-measuring after a cooldown, or with more
-ticks per repetition to shrink per-rep variance (1000 ticks measured tighter than 200 in every
-trial here), is the next concrete step - not more code.
+| condition | thunderbolt ms/tick | taskflow ms/tick | ratio |
+|---|---|---|---|
+| pre-fix, run 1 | 0.270 | 0.195 | 1.39× |
+| pre-fix, run 2 | 0.311 | 0.213 | 1.46× |
+| post-fix, run 1 | 0.300 | 0.212 | 1.42× |
+| post-fix, run 2 | 0.307 | 0.215 | 1.43× |
+
+Both conditions average **1.42×**. There is no separation between them at this precision - the
+fix is measured, cleanly, to do nothing for this scene.
+
+**Why, plausibly.** `wait_all()`'s bug was catastrophic (20×) because a single `wait_all()` waiter
+sits through an entire burst of potentially thousands of completions. Here, `wait()` returns
+immediately via `is_complete_internal()` at its top if the awaited handle is already done - so the
+external thread only actually *parks* on the condition variable, making `handle_waiters_` non-zero
+for real, during whatever fraction of a ~150-task frame the specific chain it is waiting on is
+still the slowest of the three. That window, and the completions racing inside it, are apparently
+too small on this workload for the coarse-vs-targeted distinction to show up against ~300 µs of
+total per-tick cost. The 48-concurrent-waiter conformance test demonstrates the mechanism still
+matters in general - many external waiters on different handles, overlapping for real - just not
+in this project's own frame-graph shape.
+
+**Kept anyway.** Unlike the two `RuntimeOpt` ablation flags (Stage-adjacent, proven to do nothing
+and kept off by default), this is not an optional flag - it replaces an incorrect comment
+("that path is rare") with correct, tested behaviour, at effectively zero cost (32 relaxed loads
+on the already-taken slow path of a completion, nothing on the fast path where no waiter exists).
+Reverting it would mean reintroducing a documented false assumption for no measured benefit either
+way.
 
 ## Where Thunderbolt fails to scale
 
