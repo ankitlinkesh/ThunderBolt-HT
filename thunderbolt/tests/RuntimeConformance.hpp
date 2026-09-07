@@ -190,6 +190,65 @@ void nested_waits_survive_depth() {
 }
 
 template <typename R>
+void concurrent_handle_waiters_on_different_tasks_all_wake() {
+    // RuntimeBase targets wakeups at the specific task a handle-waiter is
+    // blocked on, rather than waking every waiter on every completion (the
+    // wakeup-storm shape already fixed once for wait_all() - see the comment
+    // above handle_waiter_slots_ in RuntimeBase.hpp). That targeting is only
+    // correct if EVERY waiter's own completion still reaches it, so this drives
+    // more concurrent external-thread waiters (48) than the fixed slot budget
+    // (32) holds, forcing both the per-slot path and the overflow fallback to
+    // run in the same test. A lost wakeup here is a permanent hang, not a wrong
+    // answer, so this test cannot fail quietly - a hung thread trips the test
+    // binary's own timeout.
+    RuntimeConfig config;
+    config.worker_count = 4;
+    R runtime(config);
+
+    constexpr int kWaiters = 48;  // > kMaxHandleWaiterSlots (32)
+
+    std::vector<std::atomic<bool>> gate(kWaiters);
+    for (auto& g : gate) {
+        g.store(false);
+    }
+
+    std::vector<TaskHandle> handles(kWaiters);
+    for (int i = 0; i < kWaiters; ++i) {
+        handles[static_cast<std::size_t>(i)] = runtime.submit([&gate, i] {
+            // Each task blocks briefly so every waiter is genuinely parked in
+            // wait() - not racing to find its task already complete - by the
+            // time the last task is submitted below.
+            while (!gate[static_cast<std::size_t>(i)].load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+        });
+    }
+
+    std::atomic<int> woken{0};
+    std::vector<std::thread> waiters;
+    for (int i = 0; i < kWaiters; ++i) {
+        waiters.emplace_back([&runtime, &handles, &woken, i] {
+            runtime.wait(handles[static_cast<std::size_t>(i)]);
+            woken.fetch_add(1, std::memory_order_relaxed);
+        });
+    }
+
+    // Release every task only once all 48 waiter threads are plausibly parked.
+    // Not a guarantee - the point of the test is that late arrivals and
+    // overflow are ALSO handled correctly, not just the well-timed case.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    for (auto& g : gate) {
+        g.store(true, std::memory_order_release);
+    }
+
+    for (std::thread& th : waiters) {
+        th.join();
+    }
+
+    TB_CHECK_EQ(woken.load(), kWaiters);
+}
+
+template <typename R>
 void parallel_for_covers_every_index_once() {
     RuntimeConfig config;
     config.worker_count = 4;
@@ -446,6 +505,10 @@ void priorities_are_respected() {
     }                                                                                            \
     TB_TEST(Label " nested waits survive several levels of depth") {                             \
         ::thunderbolt::conformance::nested_waits_survive_depth<RuntimeT>();                      \
+    }                                                                                            \
+    TB_TEST(Label " concurrent handle waiters on different tasks all wake") {                    \
+        ::thunderbolt::conformance::concurrent_handle_waiters_on_different_tasks_all_wake<        \
+            RuntimeT>();                                                                          \
     }                                                                                            \
     TB_TEST(Label " parallel_for covers every index exactly once") {                             \
         ::thunderbolt::conformance::parallel_for_covers_every_index_once<RuntimeT>();            \

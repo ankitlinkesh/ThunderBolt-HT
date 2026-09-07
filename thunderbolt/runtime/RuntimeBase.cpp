@@ -260,7 +260,25 @@ void RuntimeBase::complete(TaskHandle handle) {
         std::atomic_thread_fence(std::memory_order_seq_cst);
     }
 
-    const bool wake_handle_waiters = handle_waiters_.load(std::memory_order_relaxed) != 0;
+    // Covered by the fence above, the same way handle_waiters_ and all_waiters_
+    // are: it pairs with the seq_cst writes on the waiter side (register/
+    // unregister below, and the fetch_add/fetch_sub of handle_waiters_ itself),
+    // so a relaxed read here cannot miss a registration that logically preceded
+    // it.
+    bool wake_handle_waiters = false;
+    if (handle_waiters_.load(std::memory_order_relaxed) != 0) {
+        if (handle_waiter_overflow_count_.load(std::memory_order_relaxed) != 0) {
+            // Can't tell who needs waking; fall back to the old behaviour.
+            wake_handle_waiters = true;
+        } else {
+            for (const HandleWaiterSlot& slot : handle_waiter_slots_) {
+                if (slot.task_index.load(std::memory_order_relaxed) == handle.index) {
+                    wake_handle_waiters = true;
+                    break;
+                }
+            }
+        }
+    }
     // A wait_all() waiter cannot possibly be satisfied before the last task, so
     // notifying it earlier is pure cost. This is the difference between O(1) and
     // O(tasks) condition-variable wakeups per run.
@@ -325,6 +343,26 @@ void RuntimeBase::dump_outstanding() const {
     }
 }
 
+std::size_t RuntimeBase::register_handle_waiter(std::uint32_t task_index) noexcept {
+    for (std::size_t i = 0; i < kMaxHandleWaiterSlots; ++i) {
+        std::uint32_t expected = kNoWaitedIndex;
+        if (handle_waiter_slots_[i].task_index.compare_exchange_strong(
+                expected, task_index, std::memory_order_seq_cst, std::memory_order_relaxed)) {
+            return i;
+        }
+    }
+    handle_waiter_overflow_count_.fetch_add(1, std::memory_order_seq_cst);
+    return kMaxHandleWaiterSlots;
+}
+
+void RuntimeBase::unregister_handle_waiter(std::size_t slot) noexcept {
+    if (slot < kMaxHandleWaiterSlots) {
+        handle_waiter_slots_[slot].task_index.store(kNoWaitedIndex, std::memory_order_seq_cst);
+    } else {
+        handle_waiter_overflow_count_.fetch_sub(1, std::memory_order_seq_cst);
+    }
+}
+
 bool RuntimeBase::is_complete(TaskHandle handle) const { return is_complete_internal(handle); }
 
 void RuntimeBase::wait(TaskHandle handle) {
@@ -357,12 +395,17 @@ void RuntimeBase::wait(TaskHandle handle) {
     // worker_count as the number of threads executing tasks; a main thread that
     // also ran tasks would make "1 worker" mean two executors and inflate every
     // low-worker-count measurement in the scaling sweep.
+    //
+    // Registered BEFORE handle_waiters_ goes non-zero, so a completion that
+    // observes the counter as non-zero is guaranteed to also observe this slot.
+    const std::size_t slot = register_handle_waiter(handle.index);
     handle_waiters_.fetch_add(1, std::memory_order_seq_cst);
     {
         std::unique_lock lock(completion_mutex_);
         completion_cv_.wait(lock, [this, handle] { return is_complete_internal(handle); });
     }
     handle_waiters_.fetch_sub(1, std::memory_order_seq_cst);
+    unregister_handle_waiter(slot);
 }
 
 void RuntimeBase::wait_all() {

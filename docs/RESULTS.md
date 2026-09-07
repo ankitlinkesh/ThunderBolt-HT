@@ -239,6 +239,50 @@ While in this file: `docs/RESULTS.md`'s own "Where Thunderbolt fails to scale" s
 described the pre-Stage-1 1.44× gap as unsolved, three sections after *Closing the gap* had already
 reported it closed. Corrected above — a stale claim sitting next to the number that refuted it.
 
+## Targeted handle-wait wakeups: a real fix, an inconclusive measurement
+
+A fix, applied and tested, but reported here **without a simulation-level number**, because an
+honest attempt to measure one failed for a documented reason rather than being skipped.
+
+**The bug.** `RuntimeBase.hpp` already carried this comment about `handle_waiters_`: *"Per-handle
+waiters still need a notification per completion, but that path is rare: inside a worker,
+wait(handle) helps rather than blocking."* That assumption is false for exactly the flagship
+workload — `Simulation::tick()` calls `runtime.wait()` on three chain-tail handles from the main
+thread every single frame, which is the external-thread path, not help-on-wait. While any one of
+those three waits was outstanding, `handle_waiters_ != 0` was true, and **every task completion
+anywhere in the runtime** — not just the awaited one — took `completion_mutex_` and called
+`notify_all()`. This is the identical bug shape already found and fixed for `wait_all()` (see
+`RuntimeBase.hpp`'s existing comment: measured there at ~200 ns → ~5 µs per completion, a 20×
+regression), just never applied to per-handle waits.
+
+**The fix**, in `RuntimeBase.hpp`/`.cpp`: a fixed 32-slot array of task-pool indices an
+external-thread `wait(handle)` is currently blocked on. `complete()` scans it and wakes only when
+its own completing task's index appears, instead of whenever any handle-waiter exists anywhere.
+Reference-counted overflow (more than 32 concurrent external waiters) falls back to the old
+wake-on-any-completion behaviour rather than risking a lost wakeup — correctness over precision,
+the same trade pool exhaustion already makes.
+
+**Tested before being trusted**, per this project's own repeated lesson that green suites hide the
+bugs that matter here specifically: a new conformance test drives 48 threads (over the 32-slot
+budget, forcing both the fast path and the overflow fallback) waiting on 48 *different* handles
+concurrently, and asserts every one wakes. A lost wakeup is a hang, not a wrong answer, so this
+can't pass for the wrong reason. 123 tests (121 + 2, one per runtime) green under Debug, Release
+and ASan; determinism hash unchanged.
+
+**The measurement attempt, reported honestly.** A same-code before/after comparison on `stress`
+(1000 ticks, 8 workers) needs the machine reasonably stable between the two runs, and after the
+long benchmarking sequence in this session it was not: `serial`'s own IQR went from 0.0074 ms on
+one run to 0.0935 ms — over 10× — with **no code change at all** between them. The
+thunderbolt/taskflow ratio measured 1.39× before the fix and 1.43× after, a difference smaller
+than the run-to-run noise just demonstrated on the *same* binary. That is not a negative result;
+it is a measurement that failed to clear its own noise floor, and reporting a number anyway would
+violate this project's own rule that every figure must be a real measurement, not a hopeful read
+of one.
+
+This is left as an open item, not a claim either way. Re-measuring after a cooldown, or with more
+ticks per repetition to shrink per-rep variance (1000 ticks measured tighter than 200 in every
+trial here), is the next concrete step - not more code.
+
 ## Where Thunderbolt fails to scale
 
 Stated plainly, because §94 says this matters more than the speedup.

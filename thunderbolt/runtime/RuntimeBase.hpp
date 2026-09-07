@@ -130,6 +130,12 @@ private:
 
     [[nodiscard]] bool is_complete_internal(TaskHandle handle) const;
 
+    // Registers task_index as awaited by the calling thread's handle-wait.
+    // Returns the claimed slot, or kMaxHandleWaiterSlots if none was free (in
+    // which case the overflow counter was incremented instead).
+    [[nodiscard]] std::size_t register_handle_waiter(std::uint32_t task_index) noexcept;
+    void                      unregister_handle_waiter(std::size_t slot) noexcept;
+
     RuntimeConfig config_;
     TaskPool      pool_;
 
@@ -146,11 +152,39 @@ private:
     // the runtime 20x slower than running the work serially.
     //
     // A wait_all() waiter can only be satisfied when outstanding_ reaches zero, so
-    // it is notified then and not before. Per-handle waiters still need a
-    // notification per completion, but that path is rare: inside a worker,
-    // wait(handle) helps rather than blocking, and never touches this at all.
+    // it is notified then and not before. Per-handle waiters used to need a
+    // notification on EVERY completion in the runtime, on the theory that path is
+    // rare - inside a worker, wait(handle) helps rather than blocking. It is not
+    // rare: it is exactly how the simulation's frame barrier waits from the main
+    // thread, three times a tick, and the assumption cost every one of the ~150
+    // tasks in a frame a mutex lock and a notify_all while any one of those three
+    // waits was outstanding. handle_waiter_slots_ below fixes the same class of
+    // bug wait_all() already fixed once, applied here too.
     std::atomic<std::uint32_t> handle_waiters_{0};
     std::atomic<std::uint32_t> all_waiters_{0};
+
+    // Fixed-capacity set of task-pool indices an external-thread handle-waiter is
+    // currently blocked on. complete() scans this so it can wake only a waiter
+    // whose OWN task just finished, instead of every waiter on every completion.
+    //
+    // Bounded rather than growable, so wait() never touches the allocator.
+    // Overflow (more concurrent handle-waiters than slots) falls back to the old
+    // wake-on-any-completion behaviour for as long as any overflowed waiter is
+    // still around - correctness over precision, the same trade pool exhaustion
+    // makes by degrading to inline execution rather than failing.
+    //
+    // Reference-counted rather than a bool: a bool cleared by the last waiter to
+    // leave can race with a different waiter concurrently becoming the reason the
+    // fallback is still needed, clearing it while still required. A counter, like
+    // handle_waiters_ and all_waiters_ above, has no such window.
+    static constexpr std::uint32_t kNoWaitedIndex        = 0xFFFFFFFFu;
+    static constexpr std::size_t   kMaxHandleWaiterSlots = 32;
+
+    struct HandleWaiterSlot {
+        std::atomic<std::uint32_t> task_index{kNoWaitedIndex};
+    };
+    HandleWaiterSlot            handle_waiter_slots_[kMaxHandleWaiterSlots];
+    std::atomic<std::uint32_t>  handle_waiter_overflow_count_{0};
 
     // NOT sharded, and on its own cache line.
     //
