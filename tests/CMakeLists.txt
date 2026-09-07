@@ -34,3 +34,15 @@ add_test(
             -P "${CMAKE_CURRENT_SOURCE_DIR}/check_determinism.cmake"
 )
 set_tests_properties(simulation_determinism PROPERTIES TIMEOUT 900)
+
+# Same 0xc0000135 hazard as thunderbolt_tests above, one directory up: under the
+# ASan preset, thunderbolt-sim also links clang_rt.asan_dynamic-*.dll, and this
+# test launches it from inside a CMake script (execute_process), which does not
+# inherit a fix scoped to the thunderbolt_tests target. Without this the ONE
+# check that substitutes for a missing ThreadSanitizer silently fails to run
+# under the one preset built to catch races - exactly the kind of green suite
+# that hides the bug that matters.
+get_filename_component(THUNDERBOLT_MSVC_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+set_tests_properties(simulation_determinism PROPERTIES
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${THUNDERBOLT_MSVC_BIN}"
+)

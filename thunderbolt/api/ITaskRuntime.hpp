@@ -11,6 +11,7 @@
 #include <thunderbolt/api/TaskHandle.hpp>
 #include <thunderbolt/api/TaskTypes.hpp>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -107,16 +108,29 @@ public:
         return submit_after(std::move(desc), dependencies.data(), dependencies.size());
     }
 
-    // Executes body(begin_i, end_i) over [begin, end) in batches of at most
-    // `grain` items, and blocks until all batches complete.
+    // Executes body(begin_i, end_i) over [begin, end) in chunks of at most
+    // `grain` items, and blocks until every chunk completes.
     //
-    // Batching rather than one task per item is the whole point (S15): a task
-    // per item makes scheduler overhead dominate, which is the effect Phase E's
-    // granularity experiment exists to measure rather than assume.
+    // DYNAMIC PARTITIONING (Phase I Stage 6). This does NOT submit one task per
+    // chunk. It spawns at most min(batch_count, worker_count()) tasks, and each
+    // one repeatedly claims the next `grain`-sized chunk from a shared atomic
+    // cursor until the range is exhausted. That turns an O(items/grain) task
+    // count into O(workers): at grain=1 over a million items this submits a
+    // handful of tasks, not a million, which is what lets it compete with a
+    // partitioner (e.g. Taskflow's for_each) instead of only with hand-written
+    // explicit-task loops. Load balances by claiming rather than by work-stealing
+    // - no deque, no victim selection, just one contended fetch_add.
     //
-    // `grain` is an explicit caller decision here. Automatic grain selection is
-    // a Phase G experiment and must be justified by measurement before it hides
-    // this choice.
+    // SAFE UNDER THE DETERMINISM RULE ONLY FOR ELEMENT-WISE WORK. Every call this
+    // project makes writes out[i] as a function of index i alone, so which task
+    // claims which chunk can never change the result. A REDUCTION over
+    // dynamically-claimed chunks would NOT be safe - the combine order would
+    // depend on scheduling timing - and must not be expressed through this
+    // function; that is a caller obligation this function cannot check.
+    //
+    // `grain` is still an explicit caller decision (S15/S85): it sets the claim
+    // size, trading cursor-contention (small grain) against load imbalance in the
+    // tail (large grain). Automatic grain selection remains a Phase G experiment.
     template <typename F>
     void parallel_for(std::size_t begin, std::size_t end, std::size_t grain, F&& body,
                       TaskPriority priority = TaskPriority::Normal) {
@@ -128,34 +142,48 @@ public:
         }
 
         // `body` outlives the tasks because this function waits before returning,
-        // so capturing a pointer to it is safe and keeps the task body inline.
+        // so capturing a pointer to it (and to `cursor` below) is safe.
         auto* body_ptr = &body;
 
         const std::size_t count       = end - begin;
         const std::size_t batch_count = (count + grain - 1) / grain;
 
+        const std::uint32_t configured_workers = worker_count();
+        const std::size_t   worker_cap = (configured_workers == 0) ? 1 : configured_workers;
+        const std::size_t   task_count = (batch_count < worker_cap) ? batch_count : worker_cap;
+
+        std::atomic<std::size_t> cursor{begin};
+
+        // Rarely exercised now that task_count is bounded by worker_count() rather
+        // than by batch_count, but kept: an exotic configuration with more workers
+        // than kInlineBatchHandles must still be correct, not merely fast.
         TaskHandle inline_handles[kInlineBatchHandles];
         std::vector<TaskHandle> spilled;
-        if (batch_count > kInlineBatchHandles) {
-            spilled.resize(batch_count);
+        if (task_count > kInlineBatchHandles) {
+            spilled.resize(task_count);
         }
-        TaskHandle* handles = (batch_count > kInlineBatchHandles) ? spilled.data() : inline_handles;
+        TaskHandle* handles = (task_count > kInlineBatchHandles) ? spilled.data() : inline_handles;
 
-        for (std::size_t b = 0; b < batch_count; ++b) {
-            const std::size_t lo = begin + b * grain;
-            const std::size_t hi = (lo + grain < end) ? (lo + grain) : end;
-            handles[b] = submit([body_ptr, lo, hi](TaskContext& ctx) {
-                if constexpr (std::is_invocable_v<F&, std::size_t, std::size_t, TaskContext&>) {
-                    (*body_ptr)(lo, hi, ctx);
-                } else {
-                    (void)ctx;  // body did not ask for a context
-                    (*body_ptr)(lo, hi);
+        for (std::size_t t = 0; t < task_count; ++t) {
+            handles[t] = submit([body_ptr, &cursor, end, grain](TaskContext& ctx) {
+                for (;;) {
+                    const std::size_t lo = cursor.fetch_add(grain, std::memory_order_relaxed);
+                    if (lo >= end) {
+                        break;
+                    }
+                    const std::size_t hi = (lo + grain < end) ? (lo + grain) : end;
+                    if constexpr (std::is_invocable_v<F&, std::size_t, std::size_t, TaskContext&>) {
+                        (*body_ptr)(lo, hi, ctx);
+                    } else {
+                        (void)ctx;  // body did not ask for a context
+                        (*body_ptr)(lo, hi);
+                    }
                 }
             }, priority);
         }
 
-        for (std::size_t b = 0; b < batch_count; ++b) {
-            wait(handles[b]);
+        for (std::size_t t = 0; t < task_count; ++t) {
+            wait(handles[t]);
         }
     }
 

@@ -228,14 +228,51 @@ void parallel_for_handles_small_and_empty_ranges() {
 }
 
 template <typename R>
-void parallel_for_spills_past_inline_handles() {
-    // 64 handles are stored inline; beyond that the implementation switches to a
-    // heap buffer. The switch is the bug-prone part, so cross it deliberately.
+void parallel_for_partitions_by_worker_count_not_batch_count() {
+    // Phase I Stage 6: parallel_for no longer submits one task per batch. It
+    // submits at most min(batch_count, worker_count()) tasks, each claiming
+    // grain-sized chunks from a shared cursor. With grain=1 over 1000 items and
+    // 4 workers that is ~1000 batches but only 4 tasks - the whole point of the
+    // partitioning path, and the thing a regression back to per-batch submission
+    // would break silently (correctness would still pass; only cost would regress).
     RuntimeConfig config;
     config.worker_count = 4;
     R runtime(config);
 
-    constexpr std::size_t kCount = 1000;  // 1000 batches of 1
+    constexpr std::size_t kCount = 1000;  // 1000 possible batches of 1
+
+    const std::uint64_t acquires_before = runtime.pool_acquire_count();
+
+    std::vector<int> values(kCount, 0);
+    runtime.parallel_for(0, kCount, 1, [&values](std::size_t lo, std::size_t hi) {
+        for (std::size_t i = lo; i < hi; ++i) {
+            values[i] += 1;
+        }
+    });
+
+    const long long sum = std::accumulate(values.begin(), values.end(), 0LL);
+    TB_CHECK_EQ(sum, static_cast<long long>(kCount));
+
+    // 4 partition tasks, not 1000 batch tasks. A generous ceiling (worker_count
+    // plus a small margin for any bookkeeping task the runtime itself submits)
+    // rather than an exact count, so this does not pin an implementation detail
+    // unrelated to what Stage 6 actually promises.
+    const std::uint64_t acquires_after = runtime.pool_acquire_count();
+    TB_CHECK(acquires_after - acquires_before <= 16u);
+}
+
+template <typename R>
+void parallel_for_spills_past_inline_handles() {
+    // 64 handles are stored inline; beyond that the implementation switches to a
+    // heap buffer. Since Stage 6, task_count is bounded by worker_count() rather
+    // than by batch_count, so crossing that boundary now requires MORE WORKERS
+    // than the inline budget rather than more batches. Exotic, but correctness
+    // must not depend on how exotic.
+    RuntimeConfig config;
+    config.worker_count = 96;
+    R runtime(config);
+
+    constexpr std::size_t kCount = 5000;  // several chunks per worker
     std::vector<int>      values(kCount, 0);
     runtime.parallel_for(0, kCount, 1, [&values](std::size_t lo, std::size_t hi) {
         for (std::size_t i = lo; i < hi; ++i) {
@@ -418,6 +455,10 @@ void priorities_are_respected() {
     }                                                                                            \
     TB_TEST(Label " parallel_for spills past the inline handle budget") {                        \
         ::thunderbolt::conformance::parallel_for_spills_past_inline_handles<RuntimeT>();         \
+    }                                                                                            \
+    TB_TEST(Label " parallel_for partitions by worker count, not batch count") {                 \
+        ::thunderbolt::conformance::parallel_for_partitions_by_worker_count_not_batch_count<      \
+            RuntimeT>();                                                                          \
     }                                                                                            \
     TB_TEST(Label " pool exhaustion degrades without dropping work") {                           \
         ::thunderbolt::conformance::pool_exhaustion_degrades_but_never_drops<RuntimeT>();        \

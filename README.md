@@ -63,6 +63,7 @@ one task. 20 repetitions, interleaved, median:
 | **thunderbolt** | **597-633 ns** | 0.998 |
 | taskflow, explicit tasks | 643 ns | 0.999 |
 | taskflow, native `for_each` | *fit rejected* | 0.26 |
+| **thunderbolt, partitioned `parallel_for`** | *fit rejected — see below* | ~0 |
 
 **Thunderbolt is now faster per task than Taskflow's like-for-like leg** — 597-633 ns against
 643 ns, reproduced in two independent interleaved runs.
@@ -72,6 +73,17 @@ expensive operation but **cache-line contention**: five global atomic counters p
 into one 64-byte line, ping-ponging across eight cores. Sharding the four that are only ever
 *reported*, and isolating the fifth on its own line, roughly halved per-task cost. See
 [docs/RESULTS.md](docs/RESULTS.md).
+
+**Beating `taskflow_for_each` needed a different fix, because it isn't a task-count comparison at
+all** — Taskflow's `for_each_index` partitions the range itself and runs a handful of tasks no
+matter how many indices there are. `parallel_for` now does the same: it spawns at most one task per
+worker, and each claims chunks from a shared atomic cursor until the range is exhausted, instead of
+submitting one task per batch. Tuned to claim in Taskflow-sized chunks rather than one item at a
+time (grain=1 matched Taskflow's `step` argument literally, which is not what its partitioner
+actually does, and lost), **the partitioned leg beat `taskflow_for_each` at every task count in two
+independent runs** — 7-19% faster. Fit is rejected for both legs at these counts because that is
+the point of partitioning: total time stops depending on task count. See
+[docs/RESULTS.md](docs/RESULTS.md) for the row-by-row numbers.
 
 This did **not** close the gap on the frame graph — the simulation still trails Taskflow, because
 it issues only ~150 tasks per tick and is dominated by stage barriers rather than per-task cost.

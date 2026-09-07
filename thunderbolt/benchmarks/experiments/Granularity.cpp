@@ -76,6 +76,63 @@ double run_one_sample(ITaskRuntime& runtime, ChunkedWorkload& workload, Submissi
     });
 }
 
+// Phase I Stage 6: parallel_for's OWN dynamic-partitioning path, run through
+// runtime.parallel_for(0, chunks, grain, ...) rather than one submit() per
+// chunk. This is the leg comparable to taskflow_for_each below - both hand the
+// scheduler a range and let IT decide how many TASKS to run; grain then decides
+// how many CLAIMS those tasks make, which is a caller knob on both sides (this
+// project's grain, Taskflow's partitioner) rather than something either
+// scheduler picks for you.
+//
+// grain=1 was tried first, to match taskflow_for_each's literal step=1 - and it
+// was the wrong comparison. Taskflow's default partitioner does not actually
+// claim one index at a time; it chunks internally regardless of the step
+// argument, which only controls the index stride. Handing OUR partitioner
+// grain=1 while Taskflow silently chunks made every claim on our side pay a
+// full contended fetch_add for one unit of work, which is the atomic-cursor
+// equivalent of the granularity trap S85 exists to measure - so the fairer
+// comparison uses a grain sized the same way a chunking partitioner would: a
+// bounded number of claims per worker, not one claim per element.
+[[nodiscard]] std::size_t partitioned_grain(std::size_t chunks, std::uint32_t workers) {
+    constexpr std::size_t kClaimsPerWorker = 32;
+    const std::size_t     divisor = static_cast<std::size_t>(workers) * kClaimsPerWorker;
+    const std::size_t     grain   = (chunks + divisor - 1) / divisor;
+    return grain == 0 ? 1 : grain;
+}
+
+template <typename RuntimeT>
+double run_partitioned_sample(RuntimeT& runtime, ChunkedWorkload& workload, std::size_t grain) {
+    return time_seconds([&] {
+        const std::size_t chunks = workload.chunk_count();
+        runtime.parallel_for(std::size_t{0}, chunks, grain,
+                             [&workload](std::size_t lo, std::size_t hi) {
+                                 for (std::size_t i = lo; i < hi; ++i) {
+                                     workload.run_chunk(i);
+                                 }
+                             });
+    });
+}
+
+template <typename RuntimeT>
+Leg make_partitioned_leg(std::string name, std::uint32_t workers, ChunkedWorkload& workload,
+                         std::uint64_t& inline_executions) {
+    Leg leg;
+    leg.name = std::move(name);
+    leg.run_once = [workers, &workload, &inline_executions] {
+        RuntimeConfig config;
+        config.worker_count   = workers;
+        config.task_capacity  = kTaskCapacity;
+        config.deque_capacity = 131072;
+
+        RuntimeT runtime(config);
+        const std::size_t grain = partitioned_grain(workload.chunk_count(), workers);
+        const double seconds = run_partitioned_sample(runtime, workload, grain);
+        inline_executions += runtime.inline_execution_count();
+        return seconds;
+    };
+    return leg;
+}
+
 // Pool statistics from the most recent sample. The free-list mutex is taken
 // twice per task, so it is the leading suspect for high per-task cost - and a
 // suspect gets checked against a counter, not reasoned about.
@@ -250,6 +307,7 @@ int run_granularity(const ExperimentOptions& options) {
 
         std::uint64_t inline_standard    = 0;
         std::uint64_t inline_thunderbolt = 0;
+        std::uint64_t inline_partitioned = 0;
         PoolProbe     probe_standard;
         PoolProbe     probe_thunderbolt;
 
@@ -259,6 +317,11 @@ int run_granularity(const ExperimentOptions& options) {
         legs.push_back(make_leg<ThunderboltRuntime>("thunderbolt", workers, workload,
                                                     inline_thunderbolt, options.submission,
                                                     probe_thunderbolt));
+        // Stage 6: the dynamic-partitioning path, the one comparable to
+        // taskflow_for_each below rather than to taskflow_explicit above -
+        // both hand the scheduler a range instead of a fixed task count.
+        legs.push_back(make_partitioned_leg<ThunderboltRuntime>("tb_partitioned", workers,
+                                                                workload, inline_partitioned));
         // Ablation legs. Interleaved against the baseline in the same run, which
         // is the only way a few-percent difference is distinguishable from
         // thermal drift on this machine.

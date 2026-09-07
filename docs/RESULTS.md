@@ -191,13 +191,62 @@ simulation still runs 0.499 ms/tick against Taskflow's 0.363. The simulation iss
 tasks per tick, so per-task cost is a small share of a frame dominated by ten stage barriers. The
 two benchmarks measure different things and Stage 1 only moved one of them.
 
+## Stage 6: beating `taskflow_for_each`, not just `taskflow_explicit`
+
+Stage 1 beat Taskflow's *explicit-task* leg — matched task count on both sides. It did nothing for
+`taskflow_for_each`, which is not a task-count comparison at all: Taskflow's `for_each_index`
+partitions the range itself and runs a handful of tasks regardless of how many indices there are.
+`parallel_for` couldn't compete there because it wasn't the same kind of thing — it submitted one
+task **per batch**, so at grain=1 over 65536 items it submitted 65536 tasks against Taskflow's
+eight.
+
+**The fix, in `api/ITaskRuntime.hpp`:** `parallel_for` now spawns at most `min(batch_count,
+worker_count())` tasks, and each one claims `grain`-sized chunks from a shared atomic cursor
+(`fetch_add`) until the range is exhausted. O(workers) tasks instead of O(items/grain), balanced by
+claiming rather than by work-stealing.
+
+**Correctness under dynamic claiming is not automatic — the project's own reduction-ordering rule
+covers it.** Which task claims which chunk is now a race outcome, so this is only safe when every
+call is *element-wise*: `out[i]` a pure function of index `i`, never a reduction whose combine
+order depends on scheduling. Every current caller satisfies this, and it is a caller obligation the
+function cannot check — a fold over dynamically-claimed chunks would not be safe and must not be
+expressed through `parallel_for`.
+
+**First attempt used `grain=1`, matching Taskflow's literal `step=1` argument — and that was the
+wrong comparison.** Taskflow's `step` controls the index stride, not how many indices its
+partitioner claims per task; internally it still chunks. Handing our partitioner `grain=1` while
+Taskflow silently chunked made every one of our claims pay a full contended `fetch_add` for a
+single unit of work — the atomic-cursor version of the granularity trap §85 exists to measure.
+Sizing grain the same way a chunking partitioner would (~32 claims per worker, `benchmarks/experiments/Granularity.cpp::partitioned_grain`) fixed it:
+
+| tasks | tb_partitioned | taskflow_for_each | tb_partitioned vs tf |
+|---|---|---|---|
+| 64 | 2.43 ms | 3.01 ms | **19% faster** |
+| 4096 | 2.46 ms | 2.74 ms | **10% faster** |
+| 16384 | 2.49 ms | 2.52 ms | **1% faster** |
+| 65536 | 2.48-2.53 ms | 2.72-2.75 ms | **7-10% faster** |
+
+(absolute times ×10⁻³ s; two independent interleaved runs, 20 reps each, both shown at 65536
+because that row is the flagship claim). `tb_partitioned` beat `taskflow_for_each` at **every**
+task count in both runs.
+
+Both legs' linear-overhead model has a low R² (0.02-0.7) at these task counts, and that is
+expected, not a measurement failure: the whole point of partitioning is that total time stops
+depending on task count once the partitioner takes over, so the ns/task slope the granularity
+experiment fits for `standard` and `thunderbolt` does not mean anything for either partitioned leg.
+
+While in this file: `docs/RESULTS.md`'s own "Where Thunderbolt fails to scale" section still
+described the pre-Stage-1 1.44× gap as unsolved, three sections after *Closing the gap* had already
+reported it closed. Corrected above — a stale claim sitting next to the number that refuted it.
+
 ## Where Thunderbolt fails to scale
 
 Stated plainly, because §94 says this matters more than the speedup.
 
-1. **It is 1.44× behind an industrial scheduler per task** — 1282 ns against Taskflow's 891 ns —
-   and the cause has not been found. **Four hypotheses have now been tested and all four
-   refuted:**
+1. ~~It is 1.44× behind an industrial scheduler per task~~ **No longer true — see *Closing the
+   gap* above.** Sharding the contended counters (Stage 1) took Thunderbolt to 597-633 ns/task,
+   ahead of Taskflow's 643 ns. Getting there took five hypotheses, four of which were refuted
+   first:
 
    | hypothesis | test | result |
    |---|---|---|
@@ -205,14 +254,13 @@ Stated plainly, because §94 says this matters more than the speedup.
    | task memory footprint | double `sizeof(Task)` to 384 B | **no time change** |
    | barriers wasted on empty deque probes | skip via relaxed probe | 1282 → 1251 ns, **within noise** |
    | redundant barrier in `complete()` | collapse into the adjacent RMW | 1282 → 1432 ns, **no better** |
+   | cache-line contention on hot counters | shard + pad (Stage 1) | 1282 → **597-633 ns, WON** |
 
-   Both optimisation flags are kept, defaulting off, so the negative results stay reproducible
-   rather than becoming an anecdote.
+   Both refuted optimisation flags are kept, defaulting off, so the negative results stay
+   reproducible rather than becoming an anecdote.
 
-   The remaining 1.44× is plausibly **structural rather than waste**. Thunderbolt carries
-   generation-checked handles, a task state machine, five priority levels, aging and profiling
-   counters. Taskflow's explicit-task path carries none of that. Closing the gap further may mean
-   removing features the spec asked for, which is a design decision rather than an optimisation.
+   This closed the gap on `taskflow_explicit` but not on `taskflow_for_each` — see *Stage 6* below
+   for that leg, and the frame-graph gap noted just above, which remains open.
 2. **Efficiency falls past 4 workers**, because workers 5–8 share physical cores. Expected, and
    labelled in output so it is not misread as a scheduling defect.
 3. **Below ~1000 tasks the runtime choice barely matters**; above it, per-task cost dominates and
@@ -260,6 +308,8 @@ Every one of these was found by *running* the system rather than by a test suite
 | Published per-task cost off by ~1.8× | Running the 20 reps the protocol specifies |
 | Taskflow gap overstated (2.4× vs 1.44×) | Reading what the timed region actually contained |
 | Two barrier optimisations that do nothing | Ablating them as interleaved legs |
+| `grain=1` made `tb_partitioned` lose to `taskflow_for_each` | Comparing to Taskflow's actual (chunking) behaviour instead of its literal `step` argument |
+| `simulation_determinism` silently didn't run under the ASan preset (0xc0000135) | Running `ctest --preset asan` in full instead of only the unit-test target |
 
 Two performance hypotheses were also **tested and refuted** rather than assumed. That is the
 methodology working: a measurement that says "no" is as useful as one that says "yes", and
