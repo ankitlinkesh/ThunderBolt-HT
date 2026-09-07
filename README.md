@@ -85,11 +85,27 @@ independent runs** — 7-19% faster. Fit is rejected for both legs at these coun
 the point of partitioning: total time stops depending on task count. See
 [docs/RESULTS.md](docs/RESULTS.md) for the row-by-row numbers.
 
-This did **not** close the gap on the frame graph — the simulation still trails Taskflow, because
-it issues only ~150 tasks per tick and is dominated by stage barriers rather than per-task cost.
+That closed the gap on the two isolated benchmarks but **not yet on the simulation itself** — the
+frame graph never went through `parallel_for`; `Simulation::tick()` submitted one task per
+32-entity batch directly, ten stages a tick. On `stress` (500 vehicles, 2000 NPCs, 40 aircraft)
+that's 302 discrete tasks/frame against Taskflow's **10** — one graph node per stage, internally
+partitioned the same way Stage 6 just taught `parallel_for` to be. Applying the identical fix to
+`submit_stage()` itself (`engine/core/Simulation.cpp`: at most one claiming task per worker per
+stage, not one per batch) closed this gap too:
+
+| scene | before | after | vs taskflow |
+|---|---|---|---|
+| `stress`, 8 workers | 0.31 ms/tick | **0.162 ms/tick** | **1.19× faster than Taskflow** |
+| `full_mixed`, 8 workers | — | **0.102 ms/tick** | **1.27× faster than Taskflow** |
+
+Reproduced within 0.1 ms/tick across two independent interleaved runs. **All three "beat Taskflow"
+targets are now met**: `taskflow_explicit`, `taskflow_for_each`, and the frame graph itself. See
+[docs/RESULTS.md](docs/RESULTS.md) for the full before/after and why the task count differed by
+30×.
 
 The crossover — where decomposing further costs more than it buys — sits near **1000 tasks** for
-this workload on this machine. That answers §59.6 and §59.7 directly, and needed no game.
+the isolated granularity benchmark on this machine. That answers §59.6 and §59.7 directly, and
+needed no game.
 
 ### The simulation workload, and the result it produced
 
@@ -103,28 +119,35 @@ benchmark target only) so the strongest claim in the project is checked against 
 scheduler rather than only against our own baseline. Both graphs produce an identical determinism
 hash, which is what proves they express the same dependencies.
 
-`stress` scene (500 vehicles, 2000 NPCs, 40 aircraft), 200 ticks, 8 workers, run through the
+`stress` scene (500 vehicles, 2000 NPCs, 40 aircraft), 1000 ticks, 8 workers, run through the
 **same harness** as the synthetic benchmarks — interleaved A/B/A/B, warmup discarded, median and
-IQR, throttle flagging, and a check that every leg produced the same world state:
+IQR, throttle flagging, and a check that every leg produced the same world state. 1000 ticks
+rather than 200: on this 15 W part, more ticks per repetition measurably tightens IQR by averaging
+out per-tick OS jitter within a rep, rather than across separate process launches.
 
 ```
-thunderbolt-sim --scene stress --ticks 200 -w 8                 --ab serial,standard,thunderbolt,taskflow --reps 6 --out sim.json
+thunderbolt-sim --scene stress --ticks 1000 -w 8 --ab serial,standard,thunderbolt,taskflow --reps 60 --out sim.json
 ```
 
 | leg | ms/tick | IQR | vs serial |
 |---|---|---|---|
-| serial | 1.693 | 0.025 | 1.00× |
-| standard | 1.429 | 0.203 | 1.18× |
-| thunderbolt | 0.886 | 0.039 | 1.91× |
-| **taskflow** | **0.672** | 0.078 | **2.52×** |
+| serial | 0.597 | 0.032 | 1.00× |
+| standard | 0.196 | 0.002 | 3.05× |
+| **thunderbolt** | **0.162** | 0.003 | **3.68×** |
+| taskflow | 0.195 | 0.007 | 3.07× |
 
-**Taskflow is ~1.32× faster than Thunderbolt** on a realistic frame graph. Much closer than the
-~4× gap on the synthetic benchmark, but still ahead: Thunderbolt is a credible scheduler here and
-not yet a competitive one.
+**Thunderbolt is now ~1.19× faster than Taskflow** on this frame graph, reproduced within
+0.1 ms/tick across two independent runs. This wasn't a runtime-side fix - it was the frame graph
+itself submitting one task per 32-entity batch (302 tasks/tick on `stress`) where Taskflow submits
+one graph node per stage (10) and partitions internally. See
+[docs/RESULTS.md](docs/RESULTS.md#closing-the-frame-graph-gap) for the full accounting.
 
-**StandardRuntime gets only 1.18× from 8 workers.** Its single mutex-guarded queue absorbs almost
-the entire benefit. That is the clearest evidence in the project for per-worker deques, and it
-matches the synthetic scaling run where Thunderbolt only pulled ahead past 4 workers.
+**StandardRuntime and Thunderbolt now score close on this scene** (0.196 vs 0.162 ms/tick) because
+the fix that closed the gap - fewer, coarser tasks per stage - benefits whichever scheduler is
+underneath; it is shared engine code, not runtime-specific. The scaling and scheduler-mode results
+below, from an earlier session at the previous per-batch task granularity, still hold as relative
+findings (stealing beats static, StandardRuntime saturates past 4 workers) even though the
+absolute ms/tick figures in this README predate this fix and are higher than the table above.
 
 Absolute figures move between sessions with the machine's thermal state; the *ratios* are what
 interleaving makes trustworthy, and they hold across runs.

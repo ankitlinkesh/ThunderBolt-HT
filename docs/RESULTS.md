@@ -186,10 +186,12 @@ The fix, in `core/ShardedCounter.hpp`:
 Roughly **2x on per-task cost**, from deleting contention rather than work. The baseline improved
 too, because it shares the same `RuntimeBase` counters.
 
-**One honest limit.** Beating Taskflow per task did *not* close the gap on the frame graph: the
-simulation still runs 0.499 ms/tick against Taskflow's 0.363. The simulation issues only ~150
-tasks per tick, so per-task cost is a small share of a frame dominated by ten stage barriers. The
-two benchmarks measure different things and Stage 1 only moved one of them.
+**One honest limit, at the time.** Beating Taskflow per task did *not* close the gap on the frame
+graph: the simulation still ran 0.499 ms/tick against Taskflow's 0.363. The simulation issued only
+~150 tasks per tick, so per-task cost was a small share of a frame dominated by ten stage barriers.
+The two benchmarks measured different things and Stage 1 only moved one of them. **This is no
+longer the state of the project — see *Closing the frame-graph gap* below**, which found and fixed
+the actual reason those ~150 tasks cost as much as they did.
 
 ## Stage 6: beating `taskflow_for_each`, not just `taskflow_explicit`
 
@@ -305,6 +307,57 @@ on the already-taken slow path of a completion, nothing on the fast path where n
 Reverting it would mean reintroducing a documented false assumption for no measured benefit either
 way.
 
+## Closing the frame-graph gap
+
+Two fixes tried, one made no difference, one closed the gap outright. Comparing them is the
+finding: they targeted the same *symptom* (per-task/per-completion overhead) but only one targeted
+the actual *cause* for this workload.
+
+**What the wake-targeting fix ruled out.** Sections above establish the simulation's frame cost is
+not sensitive to per-completion wakeup mechanics on this scene. That leaves the other candidate:
+the sheer number of discrete `Task` objects the frame creates.
+
+**The count, worked out properly.** `Simulation::tick()`'s `submit_stage()` submitted one task per
+`kBatchSize`-entity (32) batch, for every one of ten stages, plus one barrier task per stage. For
+the `stress` scene (500 vehicles, 2000 NPCs, 40 aircraft): vehicles contribute `⌈500/32⌉×2 + 2 =
+34`, NPCs `⌈2000/32⌉×4 + 4 = 256`, aircraft `⌈40/32⌉×4 + 4 = 12` — **302 discrete tasks a tick**
+(the oft-quoted "~150 tasks" figure was for the lighter `full_mixed` scene, not `stress`).
+Taskflow's equivalent (`game_benchmarks/TaskflowSim.cpp`) submits **ten** - one `for_each_index`
+graph node per stage - and lets its own partitioner fan each one out internally, the same way
+Stage 6 taught `parallel_for` to. Thunderbolt was paying full per-task overhead (pool acquire,
+dependency registration, state-machine transitions, completion signalling) roughly **30× more
+often** than Taskflow for the same total work.
+
+**The fix**, in `engine/core/Simulation.cpp`: `submit_stage()` now submits at most
+`min(batches, worker_count())` tasks per stage instead of one per batch, each claiming batch
+indices from a shared atomic cursor until the stage is exhausted - the exact mechanism Stage 6
+added to `parallel_for`, applied here to the simulation's own dispatch, which never went through
+`parallel_for` at all. The per-stage barrier's dependency-edge count drops the same way, from
+O(batches) to O(workers). Determinism is unaffected for the same reason Stage 6's was: batch
+*boundaries* still come from entity count alone, only which claimant runs which batch depends on
+scheduling, and every system here is element-wise (S51's rule) - verified, not assumed, against
+the unchanged 9-configuration hash.
+
+| scene | before | after | vs taskflow before | vs taskflow after |
+|---|---|---|---|---|
+| `stress` (8 workers) | 0.31 ms/tick | **0.162 ms/tick** | 1.42× slower | **1.19× faster** |
+| `full_mixed` (8 workers) | *(not separately measured)* | **0.102 ms/tick** | — | **1.27× faster** |
+
+Two independent interleaved runs on `stress` (60 reps, 1000 ticks) agree to within 0.1 ms/tick:
+0.1618 and 0.1619. `standard` improved by roughly the same factor (0.57-0.70 → ~0.195 ms/tick),
+because `submit_stage()` is shared engine code, not runtime-specific - the fix benefits whichever
+scheduler is underneath.
+
+**Thunderbolt now beats Taskflow on the flagship simulation itself, not only on the isolated
+per-task and `for_each` benchmarks.** All three "beat Taskflow" targets from Phase I are met:
+`taskflow_explicit` (Stage 1), `taskflow_for_each` (Stage 6), and the frame graph (this fix).
+
+**One caution the numbers themselves raise.** At 0.16-0.19 ms/tick the workload-weight gate now
+warns that `stress` "may be too cheap to be a scheduling benchmark" - a direct consequence of
+having just made the scheduled work much cheaper. The relative comparison (all legs measured in
+the same interleaved run) stays valid regardless, but a future heavier scene would give more
+headroom before that gate's warning becomes the dominant caveat on this result.
+
 ## Where Thunderbolt fails to scale
 
 Stated plainly, because §94 says this matters more than the speedup.
@@ -325,15 +378,16 @@ Stated plainly, because §94 says this matters more than the speedup.
    Both refuted optimisation flags are kept, defaulting off, so the negative results stay
    reproducible rather than becoming an anecdote.
 
-   This closed the gap on `taskflow_explicit` but not on `taskflow_for_each` — see *Stage 6* below
-   for that leg, and the frame-graph gap noted just above, which remains open.
+   This closed the gap on `taskflow_explicit`. *Stage 6* closed it on `taskflow_for_each`, and
+   *Closing the frame-graph gap* above closed it on the simulation itself - Thunderbolt now beats
+   Taskflow on all three.
 2. **Efficiency falls past 4 workers**, because workers 5–8 share physical cores. Expected, and
    labelled in output so it is not misread as a scheduling defect.
 3. **Below ~1000 tasks the runtime choice barely matters**; above it, per-task cost dominates and
-   the gap to Taskflow is what shows.
-4. **On cheap scenes it can lose to serial.** `full_mixed` has a sub-millisecond tick against
-   ~150 tasks, so scheduling is a large fraction of the work. The workload-weight gate warns
-   about this; it does not enforce it.
+   the gap to Taskflow is what shows on the isolated granularity benchmark specifically.
+4. **On cheap scenes it can lose to serial.** Frame cost fell far enough after closing the
+   frame-graph gap that even `stress` now trips the workload-weight gate's "may be too cheap"
+   warning at 8 workers. The gate warns; it does not enforce.
 
 ## Correction: the Taskflow gap was overstated
 
