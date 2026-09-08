@@ -59,6 +59,14 @@ public:
         return completed_.unsigned_sum();
     }
 
+    // Tasks whose callable threw. The runtime catches at the worker boundary
+    // and keeps running - see execute()'s comment - so this is the caller's way
+    // to learn a task silently didn't finish its work, instead of grepping
+    // stderr for it after the fact.
+    [[nodiscard]] std::uint64_t uncaught_exception_count() const noexcept {
+        return uncaught_exceptions_.unsigned_sum();
+    }
+
     // Dependency edges registered, and how many of those found their predecessor
     // already finished. A high already-satisfied ratio means the graph is being
     // built after the fact and is buying no parallelism.
@@ -127,6 +135,11 @@ private:
     void release_dependent(TaskHandle dependent);
 
     void run_inline(TaskDesc&& desc);
+
+    // Logs and counts a task callable's exception, caught at the worker
+    // boundary. `handle` is TaskHandle{} for the inline-execution path, which
+    // has no pool slot to name.
+    void record_uncaught_exception(TaskHandle handle, const char* what) noexcept;
 
     [[nodiscard]] bool is_complete_internal(TaskHandle handle) const;
 
@@ -201,6 +214,7 @@ private:
     ShardedCounter inline_executions_;
     ShardedCounter dependency_edges_;
     ShardedCounter dependencies_pre_satisfied_;
+    ShardedCounter uncaught_exceptions_;
 };
 
 TB_END_CACHE_ALIGNED_TYPE

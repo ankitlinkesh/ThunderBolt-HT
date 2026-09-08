@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <mutex>
 #include <numeric>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -383,6 +384,62 @@ void mixed_duration_tasks_all_complete() {
 }
 
 template <typename R>
+void a_throwing_task_does_not_crash_and_is_counted() {
+    // A task callable is arbitrary user code and is allowed to throw. Left
+    // uncaught it would terminate the whole process via std::terminate on a
+    // worker thread - this test is what proves that no longer happens, not
+    // just what the runtime's comments claim.
+    RuntimeConfig config;
+    config.worker_count = 2;
+    R runtime(config);
+
+    TB_CHECK_EQ(runtime.uncaught_exception_count(), 0u);
+
+    TaskHandle handle =
+        runtime.submit([] { throw std::runtime_error("deliberate test exception"); });
+    runtime.wait(handle);  // must return, not hang and not crash the test binary
+
+    TB_CHECK_EQ(runtime.uncaught_exception_count(), 1u);
+    TB_CHECK(runtime.is_complete(handle));
+}
+
+template <typename R>
+void a_non_std_exception_is_also_caught() {
+    // catch (...) exists specifically because not everything thrown derives
+    // from std::exception - a plain int, for instance.
+    RuntimeConfig config;
+    config.worker_count = 2;
+    R runtime(config);
+
+    TaskHandle handle = runtime.submit([] { throw 42; });
+    runtime.wait(handle);
+
+    TB_CHECK_EQ(runtime.uncaught_exception_count(), 1u);
+}
+
+template <typename R>
+void a_throwing_task_still_releases_its_dependents() {
+    // The one way "catch and continue" could be WORSE than crashing: if the
+    // thrown task's dependents were left waiting on a predecessor that never
+    // signals, a caught exception would silently become a hang instead of a
+    // crash. complete() must still run.
+    RuntimeConfig config;
+    config.worker_count = 2;
+    R runtime(config);
+
+    TaskHandle predecessor = runtime.submit([] { throw std::runtime_error("boom"); });
+
+    std::atomic<bool> dependent_ran{false};
+    TaskHandle        dependent =
+        runtime.submit_after({predecessor}, [&dependent_ran] { dependent_ran.store(true); });
+
+    runtime.wait(dependent);  // hangs forever if complete() was skipped
+
+    TB_CHECK(dependent_ran.load());
+    TB_CHECK_EQ(runtime.uncaught_exception_count(), 1u);
+}
+
+template <typename R>
 void destruction_drains_rather_than_drops() {
     // Destroying a runtime with tasks still queued must not discard them: a
     // dropped task surfaces much later as a wrong result and looks like a
@@ -528,6 +585,15 @@ void priorities_are_respected() {
     }                                                                                            \
     TB_TEST(Label " tasks of mixed duration all complete") {                                     \
         ::thunderbolt::conformance::mixed_duration_tasks_all_complete<RuntimeT>();               \
+    }                                                                                            \
+    TB_TEST(Label " a throwing task does not crash and is counted") {                            \
+        ::thunderbolt::conformance::a_throwing_task_does_not_crash_and_is_counted<RuntimeT>();   \
+    }                                                                                            \
+    TB_TEST(Label " a non-std::exception throw is also caught") {                                \
+        ::thunderbolt::conformance::a_non_std_exception_is_also_caught<RuntimeT>();              \
+    }                                                                                            \
+    TB_TEST(Label " a throwing task still releases its dependents") {                            \
+        ::thunderbolt::conformance::a_throwing_task_still_releases_its_dependents<RuntimeT>();   \
     }                                                                                            \
     TB_TEST(Label " destruction drains outstanding work") {                                      \
         ::thunderbolt::conformance::destruction_drains_rather_than_drops<RuntimeT>();            \

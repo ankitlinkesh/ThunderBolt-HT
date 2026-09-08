@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <exception>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -153,10 +154,19 @@ void RuntimeBase::run_inline(TaskDesc&& desc) {
 
     TaskDesc local = std::move(desc);
     if (local.function) {
-        local.function(ctx);
+        try {
+            local.function(ctx);
+        } catch (const std::exception& e) {
+            record_uncaught_exception(TaskHandle{}, e.what());
+        } catch (...) {
+            record_uncaught_exception(TaskHandle{}, "non-std::exception value");
+        }
     }
 
-    // Balances the increment performed before the failed acquire.
+    // Balances the increment performed before the failed acquire. Reached even
+    // when the task above threw, or a caller that submitted after this one and
+    // is waiting on outstanding_ to reach zero would hang forever over a bug in
+    // ONE task's body - turning a caught exception into an unrelated deadlock.
     outstanding_.fetch_sub(1, std::memory_order_acq_rel);
 }
 
@@ -185,8 +195,42 @@ void RuntimeBase::execute(TaskHandle handle, TaskContext& ctx) {
     ExecutingGuard executing_guard;
 #endif
 
-    task->function(ctx);
+    // A task callable is arbitrary user code and IS allowed to throw - this is a
+    // general-purpose runtime, not one where every workload can be written
+    // noexcept. Left uncaught, an exception propagating out of a worker's run
+    // loop terminates the whole process (std::terminate on an escaping
+    // exception on a non-main thread), which means a bug in ONE task takes
+    // down every OTHER task in flight along with whatever program embeds this
+    // runtime. Caught here instead, at the one place every task body is
+    // actually invoked, so no call site can forget to.
+    //
+    // complete(handle) still runs unconditionally afterward - skipping it would
+    // leave this task's dependents waiting on a predecessor that will never
+    // signal, turning a caught exception into a silent hang, which is worse
+    // than the crash this replaces.
+    try {
+        task->function(ctx);
+    } catch (const std::exception& e) {
+        record_uncaught_exception(handle, e.what());
+    } catch (...) {
+        record_uncaught_exception(handle, "non-std::exception value");
+    }
     complete(handle);
+}
+
+void RuntimeBase::record_uncaught_exception(TaskHandle handle, const char* what) noexcept {
+    uncaught_exceptions_.increment();
+    if (handle.valid()) {
+        std::fprintf(stderr,
+                     "thunderbolt: task [index=%u generation=%u] threw and was caught at the "
+                     "worker boundary: %s\n",
+                     handle.index, handle.generation, what);
+    } else {
+        std::fprintf(stderr,
+                     "thunderbolt: an inline-executed task threw and was caught at the worker "
+                     "boundary: %s\n",
+                     what);
+    }
 }
 
 void RuntimeBase::release_dependent(TaskHandle dependent) {
