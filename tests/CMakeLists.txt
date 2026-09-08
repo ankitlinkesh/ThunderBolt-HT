@@ -21,6 +21,8 @@ add_test(
             -D "GENERATOR=${CMAKE_GENERATOR}"
             -D "GEN_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
             -D "GEN_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
+            -D "CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+            -D "C_COMPILER=${CMAKE_C_COMPILER}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/check_standalone.cmake"
 )
 set_tests_properties(thunderbolt_builds_standalone PROPERTIES TIMEOUT 600)

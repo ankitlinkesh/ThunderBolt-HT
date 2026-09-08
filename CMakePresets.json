@@ -49,6 +49,84 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "inherits": "linux-base",
+      "displayName": "Linux (GCC, Debug)",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-gcc-release",
+      "inherits": "linux-base",
+      "displayName": "Linux (GCC, Release)",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-clang-debug",
+      "inherits": "linux-base",
+      "displayName": "Linux (Clang, Debug)",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-clang-release",
+      "inherits": "linux-base",
+      "displayName": "Linux (Clang, Release)",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-clang-asan",
+      "inherits": "linux-base",
+      "displayName": "Linux Clang AddressSanitizer",
+      "description": "Mirrors the MSVC asan preset. RelWithDebInfo for a usable stack trace without Debug's own overhead compounding ASan's.",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address"
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "inherits": "linux-base",
+      "displayName": "Linux Clang ThreadSanitizer",
+      "description": "The first real race detector this project has ever had access to. Every prior session substituted the determinism hash plus repeated ASan runs for this, explicitly documented in docs/RESULTS.md as weaker evidence than a real race detector - MSVC has no ThreadSanitizer at all. RelWithDebInfo like the ASan preset; TSan and ASan cannot run in the same binary, hence the separate preset rather than a combined one.",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
     }
   ],
 
@@ -57,7 +135,13 @@
     { "name": "dev-release", "configurePreset": "dev",   "configuration": "Release" },
     { "name": "dev-relwithdebinfo", "configurePreset": "dev", "configuration": "RelWithDebInfo" },
     { "name": "asan",        "configurePreset": "asan",  "configuration": "RelWithDebInfo" },
-    { "name": "ninja",       "configurePreset": "ninja" }
+    { "name": "ninja",       "configurePreset": "ninja" },
+    { "name": "linux-gcc-debug",     "configurePreset": "linux-gcc-debug" },
+    { "name": "linux-gcc-release",   "configurePreset": "linux-gcc-release" },
+    { "name": "linux-clang-debug",   "configurePreset": "linux-clang-debug" },
+    { "name": "linux-clang-release", "configurePreset": "linux-clang-release" },
+    { "name": "linux-clang-asan",    "configurePreset": "linux-clang-asan" },
+    { "name": "linux-clang-tsan",    "configurePreset": "linux-clang-tsan" }
   ],
 
   "testPresets": [
@@ -77,6 +161,36 @@
       "name": "asan",
       "configurePreset": "asan",
       "configuration": "RelWithDebInfo",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "configurePreset": "linux-gcc-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-gcc-release",
+      "configurePreset": "linux-gcc-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-clang-debug",
+      "configurePreset": "linux-clang-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-clang-release",
+      "configurePreset": "linux-clang-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-clang-asan",
+      "configurePreset": "linux-clang-asan",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "configurePreset": "linux-clang-tsan",
       "output": { "outputOnFailure": true }
     }
   ]

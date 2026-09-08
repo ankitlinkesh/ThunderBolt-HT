@@ -47,6 +47,20 @@ else()
         -Wall -Wextra -Wpedantic -Werror
         -ffp-contract=off   # GCC/Clang equivalent of the MSVC contraction pin
     )
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # CMAKE_CXX_EXTENSIONS OFF (set project-wide) means -std=c++20 rather
+        # than -std=gnu++20, and GCC/Clang only auto-define _GNU_SOURCE in the
+        # gnu++ dialect. Without it explicitly, glibc's <pthread.h> and
+        # <sched.h> hide pthread_setaffinity_np and the CPU_SET/CPU_ZERO
+        # macros behind #ifdef __USE_GNU, which Affinity.cpp needs. Applied as
+        # an INTERFACE definition here (compiles to -D_GNU_SOURCE on every
+        # consumer's command line) rather than a #define in that file, because
+        # it must be visible before the FIRST system header anywhere in the
+        # translation unit is processed - a #define after any earlier #include
+        # (even of another Thunderbolt header that pulls in <vector>) can be
+        # too late once glibc's feature-test-macro cascade has already run.
+        target_compile_definitions(thunderbolt_flags INTERFACE _GNU_SOURCE)
+    endif()
 endif()
 
 # Debug-build assertions (S62: "in debug builds, fail loudly").

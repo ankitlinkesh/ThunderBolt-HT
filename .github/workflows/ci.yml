@@ -6,13 +6,17 @@
 # Debug, ASan, or the determinism hash between sessions - this is the guard that
 # closes that gap.
 #
-# Deliberately NOT using the pinned CMakePresets.json toolset (MSVC 14.51 /
-# "Visual Studio 18 2026"): that pin exists so S87's reproducibility block always
-# names an exact, known compiler on the machine this project was developed on. A
-# hosted CI runner will have whatever MSVC ships on its image, which is the point
-# here - this workflow verifies the project builds and passes on A supported
-# toolchain, not THE exact pinned one. Configured directly with Ninja + whatever
-# cl.exe msvc-dev-cmd finds, rather than through the presets.
+# Deliberately NOT using the pinned CMakePresets.json Windows toolset (MSVC
+# 14.51 / "Visual Studio 18 2026"): that pin exists so S87's reproducibility
+# block always names an exact, known compiler on the machine this project was
+# developed on. A hosted runner has whatever toolchain its image ships, which is
+# the point here - this workflow verifies the project builds and passes on A
+# supported toolchain, not THE exact pinned one.
+#
+# Linux jobs DO use the CMakePresets.json linux-* presets (added alongside this
+# workflow) rather than raw cmake invocations, unlike the Windows jobs above
+# them - there is no toolset-pin conflict to route around on Linux, so there is
+# no reason not to exercise the presets a real contributor would actually use.
 
 name: CI
 
@@ -23,8 +27,8 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
-    name: ${{ matrix.config }}
+  windows:
+    name: Windows (${{ matrix.config }})
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -49,12 +53,13 @@ jobs:
       # Runs all four repo-level ctest entries: the unit/conformance suite,
       # architecture_layering, thunderbolt_builds_standalone, and
       # simulation_determinism - the check that substitutes for the
-      # ThreadSanitizer this toolchain does not have.
+      # ThreadSanitizer MSVC does not have (Linux's clang-tsan job below is the
+      # real one).
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-  asan:
-    name: AddressSanitizer
+  windows-asan:
+    name: Windows AddressSanitizer
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,8 +89,8 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-  with-taskflow-reference:
-    name: Taskflow reference leg
+  windows-with-taskflow-reference:
+    name: Windows Taskflow reference leg
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,3 +124,82 @@ jobs:
         run: |
           ./build/bin/thunderbolt-bench.exe --experiment granularity --reps 2 --warmup 0
           ./build/bin/thunderbolt-sim.exe --scene 100_npcs --ticks 5 --ab standard,thunderbolt,taskflow --reps 2 --warmup 0
+
+  linux:
+    name: Linux (${{ matrix.preset }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - linux-gcc-debug
+          - linux-gcc-release
+          - linux-clang-debug
+          - linux-clang-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+
+  linux-asan:
+    name: Linux Clang AddressSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset linux-clang-asan
+
+      - name: Build
+        run: cmake --build --preset linux-clang-asan --parallel
+
+      - name: Test
+        run: ctest --preset linux-clang-asan
+
+  linux-tsan:
+    name: Linux Clang ThreadSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The first real race detector this project has ever run under. MSVC has
+      # none at all; docs/RESULTS.md repeatedly documents the determinism hash
+      # plus repeated ASan runs as the substitute, explicitly weaker evidence.
+      # A TSan failure here would be the first genuine confirmation (or
+      # refutation) of that residual risk, not just another format of the same
+      # evidence already gathered.
+      - name: Configure
+        run: cmake --preset linux-clang-tsan
+
+      - name: Build
+        run: cmake --build --preset linux-clang-tsan --parallel
+
+      - name: Test
+        run: ctest --preset linux-clang-tsan
+
+  linux-with-taskflow-reference:
+    name: Linux Taskflow reference leg
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTHUNDERBOLT_REFERENCE_RUNTIMES=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke test Taskflow-linked benchmarks
+        run: |
+          ./build/bin/thunderbolt-bench --experiment granularity --reps 2 --warmup 0
+          ./build/bin/thunderbolt-sim --scene 100_npcs --ticks 5 --ab standard,thunderbolt,taskflow --reps 2 --warmup 0

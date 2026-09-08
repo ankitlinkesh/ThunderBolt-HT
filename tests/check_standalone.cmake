@@ -25,6 +25,20 @@ if(DEFINED GEN_TOOLSET AND NOT GEN_TOOLSET STREQUAL "")
     list(APPEND gen_args -T "${GEN_TOOLSET}")
 endif()
 
+# On a platform with more than one viable compiler installed (Linux: gcc AND
+# clang, commonly both present at once) this sub-configure would otherwise
+# fall back to CMake's own default choice regardless of which one the OUTER
+# build used - silently proving "the runtime builds standalone" for whichever
+# compiler happens to be the system default, not necessarily the one this test
+# run is actually about. Never an issue while MSVC was the only toolset in
+# play; matters as soon as a second one is.
+if(DEFINED CXX_COMPILER AND NOT CXX_COMPILER STREQUAL "")
+    list(APPEND gen_args -D "CMAKE_CXX_COMPILER=${CXX_COMPILER}")
+endif()
+if(DEFINED C_COMPILER AND NOT C_COMPILER STREQUAL "")
+    list(APPEND gen_args -D "CMAKE_C_COMPILER=${C_COMPILER}")
+endif()
+
 set(src_copy "${SCRATCH}/thunderbolt")
 set(build_dir "${SCRATCH}/build")
 

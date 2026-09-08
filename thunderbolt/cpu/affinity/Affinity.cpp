@@ -6,6 +6,9 @@
 
 #if defined(_WIN32)
 #  include <windows.h>
+#elif defined(__linux__)
+#  include <pthread.h>
+#  include <sched.h>
 #endif
 
 namespace thunderbolt {
@@ -71,6 +74,16 @@ bool apply_worker_affinity(std::uint32_t worker_index, AffinityMode mode) {
     const DWORD_PTR mask   = static_cast<DWORD_PTR>(1ull) << logical;
     const DWORD_PTR result = SetThreadAffinityMask(GetCurrentThread(), mask);
     return result != 0;
+#elif defined(__linux__)
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(static_cast<int>(logical), &cpu_set);
+    // pthread_setaffinity_np returns 0 on success and an errno value (NOT -1)
+    // on failure - the one POSIX function in this file that does not follow
+    // the usual "-1 means look at errno" convention.
+    const int result =
+        pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpu_set);
+    return result == 0;
 #else
     (void)logical;
     return false;
