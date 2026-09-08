@@ -12,8 +12,15 @@ together with a real-time simulation used as its flagship benchmark workload.
 
 ## Status
 
-**Phases A–H complete.** Read this section before any other — the rest of this document
-describes the design, and this section describes what actually exists today.
+**Phases A–H complete, plus Phase I ("beat Taskflow").** Read this section before any other —
+the rest of this document describes the design, and this section describes what actually exists
+today.
+
+**Thunderbolt now beats Taskflow on all three measured fronts**: per-task cost
+(`taskflow_explicit`), partitioned throughput (`taskflow_for_each`), and the flagship simulation
+itself. None of this was true when Phase A–H shipped; see *First measured results* below for the
+numbers and [docs/RESULTS.md](docs/RESULTS.md) for the full accounting, including the two
+approaches that were tried and measured to do nothing.
 
 | | |
 |---|---|
@@ -25,10 +32,12 @@ describes the design, and this section describes what actually exists today.
 | Profiler counters, benchmark harness, first results | ✅ built and measured |
 | Headless deterministic simulation | ✅ built and verified |
 | Scheduler modes (static / stealing / aging) | ✅ built and measured |
+| Partitioned `parallel_for`, beats `taskflow_for_each` | ✅ built and measured |
+| Simulation frame graph beats Taskflow end to end | ✅ built and measured |
 | Results report — 6 of 8 §59 questions answered | ✅ [docs/RESULTS.md](docs/RESULTS.md) |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
-119 unit tests pass under Debug, Release and AddressSanitizer. **28 of them are conformance
+123 unit tests pass under Debug, Release and AddressSanitizer. **28+ of them are conformance
 suites run against *both* runtimes** — that is the structural guarantee behind the A/B
 methodology: if StandardRuntime and ThunderboltRuntime ever disagree about what the task API
 means, the build fails rather than the disagreement being measured later and reported as a
@@ -85,13 +94,13 @@ independent runs** — 7-19% faster. Fit is rejected for both legs at these coun
 the point of partitioning: total time stops depending on task count. See
 [docs/RESULTS.md](docs/RESULTS.md) for the row-by-row numbers.
 
-That closed the gap on the two isolated benchmarks but **not yet on the simulation itself** — the
-frame graph never went through `parallel_for`; `Simulation::tick()` submitted one task per
-32-entity batch directly, ten stages a tick. On `stress` (500 vehicles, 2000 NPCs, 40 aircraft)
-that's 302 discrete tasks/frame against Taskflow's **10** — one graph node per stage, internally
-partitioned the same way Stage 6 just taught `parallel_for` to be. Applying the identical fix to
-`submit_stage()` itself (`engine/core/Simulation.cpp`: at most one claiming task per worker per
-stage, not one per batch) closed this gap too:
+That closed the gap on the two isolated benchmarks. The simulation itself needed a third, separate
+fix, because the frame graph never went through `parallel_for` at all — `Simulation::tick()`
+submitted one task per 32-entity batch directly, ten stages a tick. On `stress` (500 vehicles,
+2000 NPCs, 40 aircraft) that's 302 discrete tasks/frame against Taskflow's **10** — one graph node
+per stage, internally partitioned the same way Stage 6 just taught `parallel_for` to be. Applying
+the identical fix to `submit_stage()` itself (`engine/core/Simulation.cpp`: at most one claiming
+task per worker per stage, not one per batch) **closed this gap too, and Thunderbolt now wins**:
 
 | scene | before | after | vs taskflow |
 |---|---|---|---|
@@ -235,15 +244,25 @@ also produce a different hash, or the check would pass while proving nothing.
 
 ### What is still NOT measured
 
-- **No timeline profiler (§54).** Only aggregate counters; there is no per-task span capture, which
-  is the tool most likely to explain the remaining 1.44× gap to Taskflow, now that four
-  counter-based hypotheses have been tested and refuted.
+Stale as of this writing until corrected here: an earlier version of this section still described
+Thunderbolt as ~4× slower than Taskflow with the cause unidentified. That was true when this
+section was first written and has not been true since Stage 1 — see *First measured results*
+above, where Thunderbolt now wins on all three fronts measured. What is genuinely still open:
+
+- **No timeline profiler (§54).** Only aggregate counters; there is no per-task span capture.
+  Nothing currently blocks on it — the granularity and simulation gaps that motivated building one
+  are both closed — but it would still be the right tool for whatever the next open question turns
+  out to be.
 - **oneTBB was not added.** Taskflow already serves as the external reference and a second heavy
   dependency would add build cost for little extra insight. A deliberate omission, not an oversight.
 - **The workload-weight gate is advisory.** `T₁` is emitted and a warning printed for a scene
-  too cheap to be a scheduling benchmark, but nothing refuses to print the speedup.
-- Per-task cost is still ~4× an industrial scheduler on the synthetic benchmark, and the cause is
-  not yet identified. The pool-mutex hypothesis was disproved; memory footprint is untested.
+  too cheap to be a scheduling benchmark, but nothing refuses to print the speedup — and closing
+  the frame-graph gap made the `stress` scene cheap enough to now trip that warning itself.
+- **Stages 2-5 of the original per-task optimisation list were never built** (thread-local
+  free-list cache, in-place task construction, priority bitmask, successor fast-path). Deliberately
+  deprioritised: two independent measurements (Stage 1's cache fix and a later targeted-wakeup fix)
+  both showed per-task/per-completion cost is not what limits the flagship simulation, so further
+  work on that specific list is not expected to matter until a different bottleneck is found.
 
 ---
 
