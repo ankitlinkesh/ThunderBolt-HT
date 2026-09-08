@@ -1,0 +1,121 @@
+# Thunderbolt HT - continuous integration.
+#
+# WHY THIS EXISTS. Every green result reported anywhere in this project's history
+# up to this workflow's addition came from a manual build+test run on the one
+# machine this was developed on. Nothing stopped a change from silently breaking
+# Debug, ASan, or the determinism hash between sessions - this is the guard that
+# closes that gap.
+#
+# Deliberately NOT using the pinned CMakePresets.json toolset (MSVC 14.51 /
+# "Visual Studio 18 2026"): that pin exists so S87's reproducibility block always
+# names an exact, known compiler on the machine this project was developed on. A
+# hosted CI runner will have whatever MSVC ships on its image, which is the point
+# here - this workflow verifies the project builds and passes on A supported
+# toolchain, not THE exact pinned one. Configured directly with Ninja + whatever
+# cl.exe msvc-dev-cmd finds, rather than through the presets.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.config }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: seanmiddleditch/gha-setup-ninja@v4
+
+      # THUNDERBOLT_REFERENCE_RUNTIMES stays OFF here on purpose, mirroring its
+      # documented default: "a core build must never depend on the network."
+      # This is the gate that promise is actually checked against.
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # Runs all four repo-level ctest entries: the unit/conformance suite,
+      # architecture_layering, thunderbolt_builds_standalone, and
+      # simulation_determinism - the check that substitutes for the
+      # ThreadSanitizer this toolchain does not have.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  asan:
+    name: AddressSanitizer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: seanmiddleditch/gha-setup-ninja@v4
+
+      # Mirrors the local `asan` preset: RelWithDebInfo, because
+      # /fsanitize=address does not compose with the /RTC1 Debug enables by
+      # default. The DLL-path fix for clang_rt.asan_dynamic-*.dll is baked into
+      # thunderbolt/tests/CMakeLists.txt and tests/CMakeLists.txt as an
+      # ENVIRONMENT_MODIFICATION on the test properties themselves, so it applies
+      # here with no extra CI-side setup - that was the whole point of fixing it
+      # at the CMake level instead of in a shell script.
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_CXX_FLAGS=/fsanitize=address
+          "-DCMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO"
+          "-DCMAKE_SHARED_LINKER_FLAGS_RELWITHDEBINFO=/DEBUG /INCREMENTAL:NO"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  with-taskflow-reference:
+    name: Taskflow reference leg
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: seanmiddleditch/gha-setup-ninja@v4
+
+      # The Taskflow-linked path (benchmarks/experiments/Granularity.cpp,
+      # game_benchmarks/TaskflowSim.cpp) is otherwise never built in CI, since
+      # THUNDERBOLT_REFERENCE_RUNTIMES defaults OFF. Every "beats Taskflow"
+      # result this project reports comes from this code path, so it needs its
+      # own gate rather than trusting that OFF-by-default coverage implies it.
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DTHUNDERBOLT_REFERENCE_RUNTIMES=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      # Smoke-runs the Taskflow-linked binaries themselves, not just their
+      # build: a link error in an #if THUNDERBOLT_HAVE_TASKFLOW block would
+      # otherwise only surface the first time someone builds with the flag on,
+      # which - before this workflow - was rare enough to go unnoticed.
+      - name: Smoke test Taskflow-linked benchmarks
+        run: |
+          ./build/bin/thunderbolt-bench.exe --experiment granularity --reps 2 --warmup 0
+          ./build/bin/thunderbolt-sim.exe --scene 100_npcs --ticks 5 --ab standard,thunderbolt,taskflow --reps 2 --warmup 0
