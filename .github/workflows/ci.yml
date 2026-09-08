@@ -139,6 +139,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Every linux-* CMakePresets.json preset sets generator "Ninja", and
+      # ubuntu-latest does not ship ninja-build by default (unlike the Windows
+      # jobs above, which install it explicitly). Missing this the first time
+      # made every Linux job fail identically at the configure step, in
+      # seconds, regardless of gcc vs clang - a generator-not-found error, not
+      # anything about the C++ code these presets were added to build.
+      - uses: seanmiddleditch/gha-setup-ninja@v4
+
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
 
@@ -154,6 +162,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: seanmiddleditch/gha-setup-ninja@v4
+
       - name: Configure
         run: cmake --preset linux-clang-asan
 
@@ -168,6 +178,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: seanmiddleditch/gha-setup-ninja@v4
 
       # The first real race detector this project has ever run under. MSVC has
       # none at all; docs/RESULTS.md repeatedly documents the determinism hash
@@ -189,6 +201,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: seanmiddleditch/gha-setup-ninja@v4
 
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTHUNDERBOLT_REFERENCE_RUNTIMES=ON
