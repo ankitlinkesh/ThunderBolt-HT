@@ -348,20 +348,46 @@ template <typename R>
 void pool_exhaustion_degrades_but_never_drops() {
     // Correctness must not depend on the pool being large enough. The work still
     // has to happen; only parallelism may suffer, and the runtime must say so.
+    //
+    // Originally this submitted 2000 tasks from a tight loop and hoped the pool
+    // ran dry before the workers could drain it - a race between submission
+    // speed and drain speed with no forcing mechanism, which is exactly the kind
+    // of thing that passes on one machine/toolchain and fails on another (it did:
+    // green on linux-gcc-debug and linux-clang-release, red on linux-clang-debug,
+    // in the same CI run). Pool slots are held from acquire (submit time) to
+    // release (completion time), not just while a task is running, so filling
+    // every slot with tasks that are gated to never complete makes exhaustion
+    // certain rather than probable.
     RuntimeConfig config;
     config.worker_count  = 2;
     config.task_capacity = 8;
     R runtime(config);
 
-    constexpr int    kTasks = 2000;
-    std::atomic<int> ran{0};
-    for (int i = 0; i < kTasks; ++i) {
-        (void)runtime.submit([&ran] { ran.fetch_add(1, std::memory_order_relaxed); });
+    std::atomic<bool> gate{false};
+    std::atomic<int>  blockers_ran{0};
+
+    // Occupy every pool slot with a task that will not complete until released.
+    for (std::uint32_t i = 0; i < config.task_capacity; ++i) {
+        (void)runtime.submit([&gate, &blockers_ran] {
+            blockers_ran.fetch_add(1, std::memory_order_relaxed);
+            while (!gate.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+        });
     }
+
+    // The pool is now provably exhausted (8 slots acquired, none released), so
+    // this submit MUST degrade to inline execution rather than queueing.
+    std::atomic<int> extra_ran{0};
+    (void)runtime.submit([&extra_ran] { extra_ran.fetch_add(1, std::memory_order_relaxed); });
+
+    TB_CHECK(runtime.inline_execution_count() > 0);  // the degradation is reported
+    TB_CHECK_EQ(extra_ran.load(), 1);                // and the work still happened
+
+    gate.store(true, std::memory_order_release);
     runtime.wait_all();
 
-    TB_CHECK_EQ(ran.load(), kTasks);                 // nothing was dropped
-    TB_CHECK(runtime.inline_execution_count() > 0);  // and the degradation is reported
+    TB_CHECK_EQ(blockers_ran.load(), static_cast<int>(config.task_capacity));  // nothing was dropped
 }
 
 template <typename R>
