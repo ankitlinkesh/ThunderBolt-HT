@@ -76,6 +76,16 @@ std::size_t criticals_before_background(SchedulerMode mode, std::size_t critical
     runtime.wait(blocker);
     runtime.wait(background);
 
+    // wait(background) only guarantees the ONE task named is done - under
+    // aging, background can run before every queued critical has, so without
+    // this, critical tasks that captured the atomics below by reference could
+    // still be executing on the worker when this function returns and starts
+    // destroying them. `runtime` is declared before these atomics, so C++'s
+    // reverse destruction order tears them down BEFORE runtime's own
+    // destructor (which stops the worker) runs - a real stack-use-after-scope,
+    // caught by ASan on Linux and invisible on MSVC's ASan.
+    runtime.wait_all();
+
     TB_CHECK(background_ran.load());
     return background_saw.load();
 }
