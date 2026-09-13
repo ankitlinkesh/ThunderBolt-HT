@@ -77,13 +77,21 @@ void print_usage() {
         "  thunderbolt-sim --scene full_mixed --seed 42 --runtime thunderbolt -w 8 --hash\n");
 }
 
-bool parse_uint(const char* text, unsigned long long& out) {
+bool parse_uint(const char* text, std::uint64_t& out) {
     char*                    end   = nullptr;
     const unsigned long long value = std::strtoull(text, &end, 10);
     if (end == text || *end != '\0') {
         return false;
     }
-    out = value;
+    // std::strtoull returns unsigned long long specifically; std::uint64_t is
+    // a DIFFERENT type on LP64 platforms (Linux/macOS: unsigned long) even
+    // though both are 64 bits. A reference parameter needs an exact type
+    // match, so this took unsigned long long& before - which compiled fine on
+    // Windows (LLP64: uint64_t IS unsigned long long) and failed to link
+    // seed/ticks (declared uint64_t) as arguments on Linux with "no matching
+    // function". Every caller now passes uint64_t directly; this cast is the
+    // only place the two 64-bit types meet.
+    out = static_cast<std::uint64_t>(value);
     return true;
 }
 
@@ -125,7 +133,7 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(arg, "--runtime") == 0 && more) {
             runtime_name = argv[++i];
         } else if ((std::strcmp(arg, "--workers") == 0 || std::strcmp(arg, "-w") == 0) && more) {
-            unsigned long long value = 0;
+            std::uint64_t value = 0;
             if (!parse_uint(argv[++i], value)) {
                 std::fprintf(stderr, "error: --workers needs a number\n");
                 return 2;
@@ -158,11 +166,11 @@ int main(int argc, char** argv) {
                 start = comma + 1;
             }
         } else if (std::strcmp(arg, "--reps") == 0 && more) {
-            unsigned long long value = 0;
+            std::uint64_t value = 0;
             if (!parse_uint(argv[++i], value)) { return 2; }
             reps = static_cast<int>(value);
         } else if (std::strcmp(arg, "--warmup") == 0 && more) {
-            unsigned long long value = 0;
+            std::uint64_t value = 0;
             if (!parse_uint(argv[++i], value)) { return 2; }
             warmup = static_cast<int>(value);
         } else if (std::strcmp(arg, "--frame-times") == 0) {

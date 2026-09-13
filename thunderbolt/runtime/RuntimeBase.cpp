@@ -19,7 +19,12 @@ namespace {
 // graph reaches (S62).
 thread_local int t_wait_depth = 0;
 
-constexpr int kMaxWaitDepth = 256;
+// [[maybe_unused]]: only referenced inside the assert() below, which
+// compiles to nothing when NDEBUG is defined (every non-Debug config).
+// MSVC /W4 never flagged this; GCC/Clang's -Wunused-const-variable does,
+// and this project builds both with -Werror - the first real GCC/Clang
+// compile surfaced a latent MSVC-only assumption that predates Linux support.
+[[maybe_unused]] constexpr int kMaxWaitDepth = 256;
 
 // Nesting depth of execute() on this thread. Maintained in debug builds only, to
 // catch a specific and always-fatal misuse - see wait_all().
