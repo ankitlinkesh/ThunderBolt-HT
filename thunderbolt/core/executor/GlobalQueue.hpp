@@ -41,11 +41,28 @@ public:
     // subject to strict priority - which is the starvation the mode exists to
     // prevent. Found by the starvation test failing.
     [[nodiscard]] TaskHandle pop(bool lowest_first = false) {
+        return pop_with_priority(lowest_first).handle;
+    }
+
+    struct PopResult {
+        TaskHandle   handle;
+        TaskPriority priority{};
+    };
+
+    // Same as pop(), but also hands back which priority queue the handle came
+    // from - for free, since the scan below already knows. A caller that needs
+    // the task's priority right after popping (drain_global's batch-drain loop)
+    // should use this instead of reading task->priority off the pool: that read
+    // raced with the submitting thread's write (CI's linux-clang-tsan job caught
+    // it directly), because nothing actually pairs a reader with a fresh task's
+    // publication. The priority handed back here needs no such pairing - it was
+    // already resolved under this same mutex, alongside the handle itself.
+    [[nodiscard]] PopResult pop_with_priority(bool lowest_first = false) {
         // Unsynchronised early-out. A false negative is harmless: the caller is
         // about to try stealing anyway, and a task left here will be found on the
         // next pass or by another worker.
         if (count_.load(std::memory_order_acquire) == 0) {
-            return TaskHandle{};
+            return {};
         }
 
         std::lock_guard lock(mutex_);
@@ -55,10 +72,10 @@ public:
                 TaskHandle handle = queues_[p].front();
                 queues_[p].pop_front();
                 count_.fetch_sub(1, std::memory_order_release);
-                return handle;
+                return {handle, static_cast<TaskPriority>(p)};
             }
         }
-        return TaskHandle{};
+        return {};
     }
 
     // A hint. Used to decide whether a worker may park, never for correctness.

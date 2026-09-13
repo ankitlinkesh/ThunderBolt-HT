@@ -219,31 +219,18 @@ TaskHandle ThunderboltRuntime::drain_global(WorkerState& worker) {
     // These become stealable, so a burst submitted from outside still spreads
     // across workers rather than serialising on the global lock.
     for (int i = 1; i < kGlobalDrainBatch; ++i) {
-        TaskHandle extra = global_.pop();
+        // pop_with_priority(), not pop() + task->priority: the priority is
+        // already known here, resolved under global_'s own mutex alongside the
+        // handle. Re-reading task->priority off the pool used to race with the
+        // submitting thread's write - CI's linux-clang-tsan job traced it
+        // precisely, reader running before writer, meaning nothing actually
+        // paired this read with a fresh task's publication. Asking for
+        // something we already have instead of re-deriving it unsafely removes
+        // the race rather than trying to synchronize it.
+        const auto [extra, priority] = global_.pop_with_priority();
         if (!extra.valid()) {
             break;
         }
-        // Safe to dereference: we popped this handle, so no other thread has
-        // claimed it and nothing can have completed or recycled it yet.
-        const Task* task = pool().get(extra);
-        assert(task != nullptr && "handle popped from the global queue must resolve");
-
-        // UNRESOLVED (tracked, not yet fixed): CI's linux-clang-tsan job traces
-        // a real race on task->priority here - the read below happening BEFORE
-        // the submitting thread's write, not after. An acquire load of `state`
-        // was tried here and did NOT clear it (same read/write pair, same
-        // direction, confirmed on the next CI run) - the earlier theory (a
-        // missing acquire on the READER) was wrong, because the trace shows the
-        // reader running first; no ordering added on this side can fix a read
-        // that happens before the write it's racing. The live hypothesis is a
-        // handle reaching a worker before TaskPool::acquire() has finished
-        // publishing that slot - see TaskPool::acquire()/release() and
-        // whether a handle can be observed (via global_'s put-back path, or a
-        // successor registered on a concurrently-completing predecessor) before
-        // its slot's construction is complete. Left as an acquire load (harmless,
-        // just not sufficient) pending that investigation.
-        (void)task->state.load(std::memory_order_acquire);
-        const TaskPriority priority = task->priority;
 
         if (!worker.queues[static_cast<std::size_t>(priority)]->push(extra)) {
             global_.push(extra, priority);  // local deque full; put it back
