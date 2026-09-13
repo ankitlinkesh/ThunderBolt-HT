@@ -228,22 +228,13 @@ TaskHandle ThunderboltRuntime::drain_global(WorkerState& worker) {
         const Task* task = pool().get(extra);
         assert(task != nullptr && "handle popped from the global queue must resolve");
 
-        // UNRESOLVED (tracked, not yet fixed): CI's linux-clang-tsan job traces
-        // a real race on task->priority here - the read below happening BEFORE
-        // the submitting thread's write, not after. An acquire load of `state`
-        // was tried here and did NOT clear it (same read/write pair, same
-        // direction, confirmed on the next CI run) - the earlier theory (a
-        // missing acquire on the READER) was wrong, because the trace shows the
-        // reader running first; no ordering added on this side can fix a read
-        // that happens before the write it's racing. The live hypothesis is a
-        // handle reaching a worker before TaskPool::acquire() has finished
-        // publishing that slot - see TaskPool::acquire()/release() and
-        // whether a handle can be observed (via global_'s put-back path, or a
-        // successor registered on a concurrently-completing predecessor) before
-        // its slot's construction is complete. Left as an acquire load (harmless,
-        // just not sufficient) pending that investigation.
-        (void)task->state.load(std::memory_order_acquire);
-        const TaskPriority priority = task->priority;
+        // task->priority is std::atomic and this is the acquire that pairs
+        // directly with TaskPool::acquire()'s release store - see Task.hpp.
+        // An earlier attempt synchronized on task->state instead and CI proved
+        // that insufficient (the reporting worker's read still happened before
+        // the write it raced with), which is why this reads priority itself
+        // rather than trusting a nearby field to carry the ordering.
+        const TaskPriority priority = task->priority.load(std::memory_order_acquire);
 
         if (!worker.queues[static_cast<std::size_t>(priority)]->push(extra)) {
             global_.push(extra, priority);  // local deque full; put it back

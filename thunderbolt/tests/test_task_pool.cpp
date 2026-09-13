@@ -90,7 +90,7 @@ TB_TEST("the pool preserves task payload through acquire") {
     TaskHandle handle = pool.acquire(std::move(desc));
     Task*      task   = pool.get(handle);
     TB_CHECK(task != nullptr);
-    TB_CHECK(task->priority == thunderbolt::TaskPriority::High);
+    TB_CHECK(task->priority.load() == thunderbolt::TaskPriority::High);
     TB_CHECK_EQ(task->estimated_cost, 123u);
 
     thunderbolt::TaskContext ctx{nullptr, 0};

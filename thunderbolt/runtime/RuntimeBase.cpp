@@ -259,7 +259,9 @@ void RuntimeBase::release_dependent(TaskHandle dependent) {
     if (task->pending_dependencies.fetch_sub(1, std::memory_order_acq_rel) == 1) {
         // We drove it to zero, so we - and only we - enqueue it.
         task->state.store(TaskState::Queued, std::memory_order_release);
-        enqueue_ready(dependent, task->priority);
+        // Acquire load: see Task.hpp for why priority is atomic rather than
+        // trusting this to be covered by pending_dependencies/state ordering.
+        enqueue_ready(dependent, task->priority.load(std::memory_order_acquire));
     }
 }
 
