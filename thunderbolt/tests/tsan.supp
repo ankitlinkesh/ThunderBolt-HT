@@ -1,0 +1,25 @@
+# ThreadSanitizer suppressions for Thunderbolt HT.
+#
+# AbpDeque's steal() and push() read/write buffer_[index] as plain (non-atomic)
+# memory. Ordering comes entirely from the top_/bottom_ index protocol - the
+# fences from Le, Pop, Cohen & Zappa Nardelli, "Correct and Efficient
+# Work-Stealing for Weak Memory Models" (PPoPP 2013) - not from the element
+# access itself. That element access is a data race by the strict letter of
+# the C++ memory model, and TSan is right to see it that way: it tracks
+# happens-before over addresses, and there is genuinely no synchronization
+# edge on the buffer_[index] access in isolation.
+#
+# It is provably not a BUG, though. push()'s capacity guard
+# (`b - t >= capacity_` => refuse) makes it algorithmically impossible for a
+# thief's read index and the owner's write index to alias the same physical
+# slot while `t < b` - which is the only condition under which a thief's
+# speculative read in steal() executes at all. Aliasing would require the
+# deque to hold at least `capacity_` live elements, which push() never
+# permits. TSan cannot see this invariant; it only sees two plain accesses to
+# the same shadow-memory address with no proven order between them.
+#
+# This is a suppression of one specific, reasoned-through pattern - not a
+# license to add other plain shared-memory access to this file without the
+# same analysis. See AbpDeque.hpp's own header comment and the steal()/push()
+# bodies for the full argument.
+race:thunderbolt::AbpDeque
