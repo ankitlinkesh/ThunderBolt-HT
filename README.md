@@ -35,6 +35,7 @@ approaches that were tried and measured to do nothing.
 | Partitioned `parallel_for`, beats `taskflow_for_each` | ✅ built and measured |
 | Simulation frame graph beats Taskflow end to end | ✅ built and measured |
 | Results report — 6 of 8 §59 questions answered | ✅ [docs/RESULTS.md](docs/RESULTS.md) |
+| Linux + Clang support, GitHub Actions CI (11 jobs) | ✅ all green |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
 123 unit tests pass under Debug, Release and AddressSanitizer. **28+ of them are conformance
@@ -339,6 +340,18 @@ Configurations:
 | `asan` | AddressSanitizer. **Finds memory errors, not data races** — see Limitations. |
 | `ninja` | Faster iteration; requires a Developer Command Prompt for `INCLUDE`/`LIB`. |
 
+Linux is also a first-class target, via GCC and Clang: `linux-gcc-debug`, `linux-gcc-release`,
+`linux-clang-debug`, `linux-clang-release`, plus `linux-clang-asan` and `linux-clang-tsan` for
+the sanitizer legs. `thunderbolt/` builds standalone there the same way it does on Windows.
+
+### Continuous integration
+
+Every push and PR runs 11 jobs on GitHub Actions: Windows (Debug/Release), Windows ASan, Linux
+GCC (Debug/Release), Linux Clang (Debug/Release), Linux Clang ASan, Linux Clang **ThreadSanitizer**,
+and a Taskflow-linked reference leg on each OS. All 11 are green as of this writing. The
+`linux-clang-tsan` job is the first real race detector this project has ever had, and it earned
+its place — see *ThreadSanitizer* under Limitations for what it actually found.
+
 Add `-DTHUNDERBOLT_REFERENCE_RUNTIMES=ON` at configure time to fetch Taskflow and include the
 external comparison legs. It is off by default: a core build must never require the network.
 
@@ -404,10 +417,18 @@ available on this toolchain.
 
 Stated plainly, because they bound what this project can currently claim.
 
-- **No ThreadSanitizer.** TSan is clang/Linux-only and unavailable under MSVC. ASan finds
-  memory errors, *not* data races, and does not close this gap. Race confidence currently rests
-  on the determinism hash, randomized stress tests, and choosing the simpler bounded deque over
-  a growable one. This is a real residual risk and is not treated as solved.
+- **ThreadSanitizer now exists, but only on the Linux/Clang CI leg** — MSVC still has no TSan,
+  so local Windows development still relies on the determinism hash and repeated stress runs.
+  Adding it was not a formality: the first `linux-clang-tsan` run found three real,
+  previously-unknown data races that 32 clean stress runs and the determinism hash had both
+  missed — a stack-use-after-scope in a scheduler-mode test, and two separate memory-ordering
+  bugs in the task dispatch path (`RuntimeBase::execute`'s state transition, and
+  `submit_after`'s dependency-count publish). All three are fixed; see *Continuous integration*
+  above.
+  A fourth attempted fix (making a task field atomic) cleared its TSan report but hung the
+  `linux-gcc-debug` job — caught by CI, reverted, and replaced with a fix that removes the
+  racy read instead of trying to synchronize it. Race confidence is real now, not assumed, but
+  still bounded to what that one CI leg exercises.
 - **Reference hardware is a 4-core / 8-thread 15 W laptop CPU.** Scaling studies stop at 8
   workers, and the efficiency drop past 4 is SMT rather than a scheduler defect. Results are
   labelled accordingly.
