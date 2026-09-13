@@ -119,8 +119,16 @@ TaskHandle RuntimeBase::submit_after(TaskDesc desc, const TaskHandle* dependenci
     // have even been counted - and the task would then run before dependencies it
     // was about to declare. The guard is removed only after every edge is
     // registered, so the count is never transiently low.
+    //
+    // RELEASE, not relaxed: a predecessor completing on another thread reaches
+    // this task through release_dependent()'s pending_dependencies.fetch_sub(),
+    // which is already acq_rel. A relaxed store here gives that acquire nothing
+    // to pair with, so a worker's fetch_sub could observe the counter dropping
+    // to zero without also seeing task->priority (written above, by this same
+    // thread, before this store) - CI's linux-clang-tsan job caught exactly
+    // that gap. This store is what release_dependent's read needs to pair with.
     task->pending_dependencies.store(static_cast<std::uint32_t>(dependency_count) + 1,
-                                     std::memory_order_relaxed);
+                                     std::memory_order_release);
 
     for (std::size_t i = 0; i < dependency_count; ++i) {
         const TaskHandle dependency = dependencies[i];
