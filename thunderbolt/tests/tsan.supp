@@ -22,4 +22,11 @@
 # license to add other plain shared-memory access to this file without the
 # same analysis. See AbpDeque.hpp's own header comment and the steal()/push()
 # bodies for the full argument.
-race:thunderbolt::AbpDeque
+#
+# The wildcards are load-bearing, not decoration: TSan's suppression matcher
+# requires an EXACT match of the frame's demangled name when a pattern has no
+# '*'. The real frames are template instantiations like
+# "thunderbolt::AbpDeque<int>::steal(int&)", which a bare "thunderbolt::AbpDeque"
+# pattern never equals - confirmed on CI, where that exact bare pattern
+# suppressed nothing and the report kept firing.
+race:*AbpDeque*
