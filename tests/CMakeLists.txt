@@ -44,7 +44,14 @@ set_tests_properties(simulation_determinism PROPERTIES TIMEOUT 900)
 # check that substitutes for a missing ThreadSanitizer silently fails to run
 # under the one preset built to catch races - exactly the kind of green suite
 # that hides the bug that matters.
+#
+# TSAN_OPTIONS needs the identical treatment for the identical reason: this is
+# a SEPARATE process (thunderbolt-sim, not thunderbolt_tests), so
+# thunderbolt/tests/CMakeLists.txt's suppression wiring does not reach it.
+# Confirmed missing by CI: AbpDeque<TaskHandle> races (the same proven-benign
+# pattern tsan.supp already documents for AbpDeque<int>) showed up unsuppressed
+# here, from a completely different BuildId, before this line existed.
 get_filename_component(THUNDERBOLT_MSVC_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
 set_tests_properties(simulation_determinism PROPERTIES
-    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${THUNDERBOLT_MSVC_BIN}"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${THUNDERBOLT_MSVC_BIN};TSAN_OPTIONS=set:suppressions=${CMAKE_SOURCE_DIR}/thunderbolt/tests/tsan.supp"
 )
