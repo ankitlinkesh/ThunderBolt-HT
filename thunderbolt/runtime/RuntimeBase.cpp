@@ -184,17 +184,27 @@ void RuntimeBase::execute(TaskHandle handle, TaskContext& ctx) {
         return;
     }
 
-    // Detects a task being dispatched twice (S62 "double completion"). In debug
-    // this is an exchange rather than a store, so the previous state is checked
-    // rather than silently overwritten.
-#if THUNDERBOLT_DEBUG
+    // This must be an exchange with an ACQUIRE component in every build, not just
+    // debug. The publishing thread (submit()/acquire()) writes task->function and
+    // task->priority BEFORE its own release-store(s) to task->state; a worker
+    // needs a genuine acquire on state - not just a release-store of its own - to
+    // be guaranteed to see those writes before calling task->function(ctx) below.
+    // A plain release store here (the pre-fix non-debug path) pairs with nothing:
+    // it publishes THIS thread's Executing transition but does not synchronize-
+    // with whatever the submitting thread wrote. The linux-clang-tsan CI job -
+    // this project's first real race detector - caught it; it never showed up
+    // locally because MSVC has no TSan and x86's strong memory model makes a
+    // plain store "work" there whether or not it is correct C++.
+    //
+    // Detects a task being dispatched twice (S62 "double completion") as a side
+    // effect: the previous state is checked in debug builds rather than silently
+    // overwritten.
     const TaskState previous = task->state.exchange(TaskState::Executing, std::memory_order_acq_rel);
+#if THUNDERBOLT_DEBUG
     assert((previous == TaskState::Queued || previous == TaskState::Ready) &&
            "task dispatched twice, or dispatched from an unexpected state");
-    (void)previous;
-#else
-    task->state.store(TaskState::Executing, std::memory_order_release);
 #endif
+    (void)previous;
 
 #if THUNDERBOLT_DEBUG
     ExecutingGuard executing_guard;
