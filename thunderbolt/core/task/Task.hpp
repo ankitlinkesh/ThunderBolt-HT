@@ -44,14 +44,7 @@ struct alignas(kCacheLineSize) Task {
     // task whose remaining edges have not been counted yet.
     std::atomic<std::uint32_t> pending_dependencies{0};
 
-    // Atomic, not plain: a worker can read this (drain_global, release_dependent)
-    // on a different thread than the one that wrote it, and neither of those
-    // reads sat behind synchronization that actually paired with the write - CI's
-    // ThreadSanitizer caught the gap directly here, not through the several other
-    // mechanisms (the free-list mutex, the state field, generation) that looked
-    // like they should have covered it and didn't. Making the field itself carry
-    // release/acquire makes it correct without needing that chain proven at all.
-    std::atomic<TaskPriority> priority{TaskPriority::Normal};
+    TaskPriority  priority       = TaskPriority::Normal;
     TaskFlags     flags          = TaskFlags::None;
     std::uint32_t estimated_cost = 0;
 

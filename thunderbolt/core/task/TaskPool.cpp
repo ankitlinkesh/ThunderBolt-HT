@@ -81,10 +81,7 @@ TaskHandle TaskPool::acquire(TaskDesc&& desc) {
     assert(task.state.load(std::memory_order_relaxed) == TaskState::Free);
 
     task.function       = std::move(desc.function);
-    // Release: this is the write a worker's later acquire load (drain_global,
-    // release_dependent) needs to pair with directly, rather than relying on
-    // it being carried transitively by state/generation/the free-list mutex.
-    task.priority.store(desc.priority, std::memory_order_release);
+    task.priority       = desc.priority;
     task.flags          = desc.flags;
     task.estimated_cost = desc.estimated_cost;
     task.pending_dependencies.store(0, std::memory_order_relaxed);
