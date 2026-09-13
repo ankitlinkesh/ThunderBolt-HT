@@ -227,6 +227,17 @@ TaskHandle ThunderboltRuntime::drain_global(WorkerState& worker) {
         // claimed it and nothing can have completed or recycled it yet.
         const Task* task = pool().get(extra);
         assert(task != nullptr && "handle popped from the global queue must resolve");
+
+        // pool().get()'s generation check is an acquire load of `generation`,
+        // which was last WRITTEN by whichever release() previously freed this
+        // slot - not by this task's submitter. On its own it does not guarantee
+        // this thread sees the submitting thread's writes to the task, priority
+        // included: CI's linux-clang-tsan job caught exactly that gap here,
+        // the same class of bug the execute() fix in RuntimeBase.cpp closed for
+        // task->function. An acquire load of `state` closes it here too: submit()
+        // release-stores state (Created, then Queued) after writing priority, so
+        // this pairs with that release chain and makes the read below safe.
+        (void)task->state.load(std::memory_order_acquire);
         const TaskPriority priority = task->priority;
 
         if (!worker.queues[static_cast<std::size_t>(priority)]->push(extra)) {
