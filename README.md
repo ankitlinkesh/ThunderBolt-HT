@@ -36,6 +36,7 @@ approaches that were tried and measured to do nothing.
 | Simulation frame graph beats Taskflow end to end | ✅ built and measured |
 | Results report — 6 of 8 §59 questions answered | ✅ [docs/RESULTS.md](docs/RESULTS.md) |
 | Linux + Clang support, GitHub Actions CI (11 jobs) | ✅ all green |
+| `find_package(Thunderbolt)` / install support | ✅ verified against a real external consumer |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
 123 unit tests pass under Debug, Release and AddressSanitizer. **28+ of them are conformance
@@ -354,6 +355,36 @@ its place — see *ThreadSanitizer* under Limitations for what it actually found
 
 Add `-DTHUNDERBOLT_REFERENCE_RUNTIMES=ON` at configure time to fetch Taskflow and include the
 external comparison legs. It is off by default: a core build must never require the network.
+
+### Using it in your own project
+
+Thunderbolt HT is `find_package`-able. Build and install it once:
+
+```
+cmake -S thunderbolt -B build/standalone -DCMAKE_BUILD_TYPE=Release
+cmake --build build/standalone --config Release --target thunderbolt
+cmake --install build/standalone --config Release --prefix /wherever/you/want
+```
+
+then in a completely separate project's `CMakeLists.txt`:
+
+```cmake
+find_package(Thunderbolt REQUIRED)
+target_link_libraries(your_target PRIVATE thunderbolt::thunderbolt)
+```
+
+(pointing `CMAKE_PREFIX_PATH` at the install prefix if it isn't a system location), and
+`#include <thunderbolt/api/ITaskRuntime.hpp>` / `<thunderbolt/runtime/ThunderboltRuntime.hpp>`
+as usual. This is a genuinely separate build, verified by actually installing the package and
+building an external consumer against it, not just by reading the CMake — **your own project
+does not inherit this project's `-Werror`/`/WX` warnings-as-errors policy**, only the C++20
+requirement its headers actually need. `THUNDERBOLT_INSTALL` (default on for the standalone
+configure, off when pulled in via `add_subdirectory()`) controls whether these install rules
+exist at all, so embedding Thunderbolt in another CMake project via `add_subdirectory()` doesn't
+silently start installing its targets into that project's own install tree.
+
+There is no vcpkg or Conan port yet — `find_package` after a manual install is the whole story
+today.
 
 To verify the runtime really is independent of the simulation:
 
