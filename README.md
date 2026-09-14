@@ -37,6 +37,7 @@ approaches that were tried and measured to do nothing.
 | Results report — 6 of 8 §59 questions answered | ✅ [docs/RESULTS.md](docs/RESULTS.md) |
 | Linux + Clang support, GitHub Actions CI (11 jobs) | ✅ all green |
 | `find_package(Thunderbolt)` / install support | ✅ verified against a real external consumer |
+| vcpkg overlay port, Conan recipe | ✅ both verified end-to-end (build + link + run) |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
 123 unit tests pass under Debug, Release and AddressSanitizer. **28+ of them are conformance
@@ -383,8 +384,45 @@ configure, off when pulled in via `add_subdirectory()`) controls whether these i
 exist at all, so embedding Thunderbolt in another CMake project via `add_subdirectory()` doesn't
 silently start installing its targets into that project's own install tree.
 
-There is no vcpkg or Conan port yet — `find_package` after a manual install is the whole story
-today.
+#### vcpkg
+
+A port lives at `packaging/vcpkg/ports/thunderbolt` as an **overlay port** — it is not (yet) in
+the official vcpkg registry, so use it with `--overlay-ports`:
+
+```
+vcpkg install thunderbolt --overlay-ports=packaging/vcpkg/ports
+```
+
+or, in manifest mode, point `vcpkg-configuration.json`'s overlay-ports at that directory. It
+pulls this exact commit from GitHub (pinned by `REF` + `SHA512` in the portfile, the same way any
+vcpkg port pins its source), builds `thunderbolt/` with `THUNDERBOLT_BUILD_TESTS`/`EXAMPLES`/
+`BENCHMARKS` off, and runs `vcpkg_cmake_config_fixup` on the install this README's own
+`find_package` section describes — same `find_package(Thunderbolt CONFIG REQUIRED)` /
+`target_link_libraries(... thunderbolt::thunderbolt)` on the other side. Verified for real: built
+through `vcpkg install`, then configured and ran a separate consumer against vcpkg's own
+toolchain file (`-DCMAKE_TOOLCHAIN_FILE=.../vcpkg.cmake`).
+
+#### Conan
+
+A recipe lives at `thunderbolt/conanfile.py`, with a standard `test_package/` next to it:
+
+```
+cd thunderbolt
+conan create . -s compiler.cppstd=20
+```
+
+`conan create` builds the package, installs it into the local Conan cache, and — because of
+`test_package/` — configures, builds, and **runs** a separate consumer against it as part of the
+same command, the same way the manual `find_package` verification above does but automated. One
+thing worth knowing if you read the recipe: it tried pointing Conan's `CMakeDeps` generator at
+Thunderbolt's own installed CMake config first (`cmake_find_mode="config"`), since writing a
+second, parallel config from `cpp_info` guesses seemed redundant — that configured fine but
+linked with unresolved externals, so `package_info()` uses the standard `cpp_info`-described
+package instead, which is documented as a decision in the recipe rather than left unexplained.
+
+Neither port is submitted to the official vcpkg or Conan Center registries — that's a PR to a
+third-party repository with its own review process, a separate step from building the port
+itself.
 
 To verify the runtime really is independent of the simulation:
 
