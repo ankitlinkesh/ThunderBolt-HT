@@ -245,6 +245,28 @@ TaskHandle TaskPool::acquire(TaskDesc&& desc) {
     return TaskHandle{index, generation};
 }
 
+Task* TaskPool::reserve(TaskPriority priority, TaskHandle& out_handle) {
+    acquire_count_.increment();
+
+    std::uint32_t index = 0;
+    if (!take_free_slot(index)) {
+        out_handle = TaskHandle{};
+        return nullptr;
+    }
+
+    Task& task = slots_[index];
+    assert(task.state.load(std::memory_order_relaxed) == TaskState::Free);
+
+    task.priority       = priority;
+    task.flags          = TaskFlags::None;
+    task.estimated_cost = 0;
+    task.pending_dependencies.store(0, std::memory_order_relaxed);
+    task.open_successors();
+
+    out_handle = TaskHandle{index, task.generation.load(std::memory_order_relaxed)};
+    return &task;
+}
+
 void TaskPool::release(TaskHandle handle) {
     assert(handle.valid());
     assert(handle.index < capacity_);

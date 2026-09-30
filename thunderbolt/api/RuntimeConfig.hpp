@@ -59,6 +59,11 @@ enum RuntimeOpt : std::uint32_t {
     // Slots can sit in a thread's cache while another thread sees the pool as
     // empty, so it is disabled for pools too small for that to be negligible.
     kOptThreadCache = 1u << 2,
+
+    // Phase I Stage 3. submit(callable) reserves the pool slot first and
+    // constructs the callable directly into it, instead of building a
+    // TaskFunction, moving it into a TaskDesc, and moving it again into the slot.
+    kOptInPlaceSubmit = 1u << 3,
 };
 
 struct RuntimeConfig {

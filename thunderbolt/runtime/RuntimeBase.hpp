@@ -34,6 +34,8 @@ public:
     // Deliberately final: identical semantics are the point, so a derived runtime
     // is not given the opportunity to redefine them.
     [[nodiscard]] TaskHandle submit(TaskDesc desc) final;
+    [[nodiscard]] TaskHandle submit_emplace(EmplaceFn construct, void* source,
+                                            TaskPriority priority) final;
     [[nodiscard]] TaskHandle submit_after(TaskDesc desc, const TaskHandle* dependencies,
                                           std::size_t dependency_count) final;
 

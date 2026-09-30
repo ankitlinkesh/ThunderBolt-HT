@@ -36,34 +36,17 @@ public:
     template <typename F>
         requires(!std::is_same_v<std::decay_t<F>, TaskFunction>)
     TaskFunction(F&& f) {  // NOLINT(google-explicit-constructor) - implicit conversion is intended
-        using Fn = std::decay_t<F>;
+        init(std::forward<F>(f));
+    }
 
-        static_assert(sizeof(Fn) <= kStorageSize,
-                      "Task callable captures too much state to store inline. Either capture less, "
-                      "or box the state yourself and capture a pointer to it - so that the "
-                      "allocation is visible at the call site instead of hidden per task.");
-        static_assert(alignof(Fn) <= kStorageAlign,
-                      "Task callable has stricter alignment than the inline task storage.");
-        static_assert(std::is_invocable_v<Fn&, TaskContext&> || std::is_invocable_v<Fn&>,
-                      "Task callable must be invocable as f(TaskContext&) or f().");
-        static_assert(std::is_nothrow_move_constructible_v<Fn>,
-                      "Task callable must be nothrow-move-constructible: it is relocated into the "
-                      "task pool on a path that cannot recover from a throwing move.");
-
-        ::new (static_cast<void*>(storage_)) Fn(std::forward<F>(f));
-
-        invoke_ = [](void* self, TaskContext& ctx) {
-            Fn& fn = *static_cast<Fn*>(self);
-            // Both call shapes are supported so trivial tasks need not accept a
-            // context they do not use.
-            if constexpr (std::is_invocable_v<Fn&, TaskContext&>) {
-                fn(ctx);
-            } else {
-                (void)ctx;  // unused for the no-argument call shape
-                fn();
-            }
-        };
-        manage_ = &manage_impl<Fn>;
+    // Constructs the callable directly into THIS object's storage, replacing any
+    // body it held. This is what lets the pool build a task body in its final
+    // slot instead of building it elsewhere and relocating it.
+    template <typename F>
+        requires(!std::is_same_v<std::decay_t<F>, TaskFunction>)
+    void emplace(F&& f) {
+        reset();
+        init(std::forward<F>(f));
     }
 
     TaskFunction(TaskFunction&& other) noexcept { move_from(other); }
@@ -98,6 +81,38 @@ public:
     }
 
 private:
+    template <typename F>
+    void init(F&& f) {
+        using Fn = std::decay_t<F>;
+
+        static_assert(sizeof(Fn) <= kStorageSize,
+                      "Task callable captures too much state to store inline. Either capture less, "
+                      "or box the state yourself and capture a pointer to it - so that the "
+                      "allocation is visible at the call site instead of hidden per task.");
+        static_assert(alignof(Fn) <= kStorageAlign,
+                      "Task callable has stricter alignment than the inline task storage.");
+        static_assert(std::is_invocable_v<Fn&, TaskContext&> || std::is_invocable_v<Fn&>,
+                      "Task callable must be invocable as f(TaskContext&) or f().");
+        static_assert(std::is_nothrow_move_constructible_v<Fn>,
+                      "Task callable must be nothrow-move-constructible: it is relocated into the "
+                      "task pool on a path that cannot recover from a throwing move.");
+
+        ::new (static_cast<void*>(storage_)) Fn(std::forward<F>(f));
+
+        invoke_ = [](void* self, TaskContext& ctx) {
+            Fn& fn = *static_cast<Fn*>(self);
+            // Both call shapes are supported so trivial tasks need not accept a
+            // context they do not use.
+            if constexpr (std::is_invocable_v<Fn&, TaskContext&>) {
+                fn(ctx);
+            } else {
+                (void)ctx;  // unused for the no-argument call shape
+                fn();
+            }
+        };
+        manage_ = &manage_impl<Fn>;
+    }
+
     enum class ManageOp { Destroy, MoveTo };
 
     using InvokeFn = void (*)(void*, TaskContext&);

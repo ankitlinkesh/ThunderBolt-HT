@@ -335,6 +335,13 @@ int run_granularity(const ExperimentOptions& options) {
         legs.push_back(make_leg<ThunderboltRuntime>("tb_s2_threadcache", workers, workload,
                                                     inline_thunderbolt, options.submission,
                                                     probe_thunderbolt, kOptThreadCache));
+        legs.push_back(make_leg<ThunderboltRuntime>("tb_s3_inplace", workers, workload,
+                                                    inline_thunderbolt, options.submission,
+                                                    probe_thunderbolt, kOptInPlaceSubmit));
+        legs.push_back(make_leg<ThunderboltRuntime>("tb_s23", workers, workload,
+                                                    inline_thunderbolt, options.submission,
+                                                    probe_thunderbolt,
+                                                    kOptThreadCache | kOptInPlaceSubmit));
         legs.push_back(make_leg<ThunderboltRuntime>(
             "tb_o12_both", workers, workload, inline_thunderbolt, options.submission,
             probe_thunderbolt, kOptSkipEmptyDeques | kOptSingleBarrierOnComplete));

@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <memory>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -29,6 +30,12 @@ public:
     ITaskRuntime& operator=(const ITaskRuntime&) = delete;
     virtual ~ITaskRuntime()                      = default;
 
+protected:
+    // Set once by the runtime's constructor, read by the submit() template.
+    bool in_place_submit_ = false;
+
+public:
+
     // ---------------------------------------------------------------------
     // Core interface. Implementations differ only in HOW work is distributed;
     // the observable semantics below are identical across runtimes by design,
@@ -39,6 +46,19 @@ public:
     // Submits a task for execution. The returned handle may be waited on.
     // Thread-safe, and callable from inside a running task.
     [[nodiscard]] virtual TaskHandle submit(TaskDesc desc) = 0;
+
+    // In-place submission (Phase I Stage 3). `construct` builds the task body into
+    // the TaskFunction it is handed, from the callable `src` points at. Only
+    // reached when in_place_submit_ is set; the default builds a TaskDesc, so a
+    // runtime that does not override it still behaves identically.
+    using EmplaceFn = void (*)(TaskFunction& destination, void* source);
+    [[nodiscard]] virtual TaskHandle submit_emplace(EmplaceFn construct, void* source,
+                                                    TaskPriority priority) {
+        TaskDesc desc;
+        desc.priority = priority;
+        construct(desc.function, source);
+        return submit(std::move(desc));
+    }
 
     // Submits a task that becomes runnable only once every handle in
     // `dependencies` has completed (S8).
@@ -91,6 +111,15 @@ public:
     template <typename F>
         requires(!std::is_same_v<std::decay_t<F>, TaskDesc>)
     [[nodiscard]] TaskHandle submit(F&& fn, TaskPriority priority = TaskPriority::Normal) {
+        if (in_place_submit_) {
+            // Phase I Stage 3: the runtime reserves the slot and this trampoline
+            // constructs the callable straight into it. `fn` is only read through
+            // the pointer for the duration of this call.
+            using Bare = std::remove_reference_t<F>;
+            return submit_emplace(
+                [](TaskFunction& dst, void* src) { dst.emplace(std::forward<F>(*static_cast<Bare*>(src))); },
+                const_cast<void*>(static_cast<const volatile void*>(std::addressof(fn))), priority);
+        }
         return submit(TaskDesc{TaskFunction{std::forward<F>(fn)}, priority});
     }
 

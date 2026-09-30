@@ -56,6 +56,21 @@ public:
     // every outstanding handle to it. Must be called exactly once per acquire.
     void release(TaskHandle handle);
 
+    // In-place variant (Phase I Stage 3). Reserves a slot and initialises
+    // everything except the body and the published state, and returns the Task so
+    // the caller neither moves a TaskDesc into it nor re-resolves the handle it
+    // just got. Returns nullptr when exhausted.
+    //
+    // The caller MUST construct task->function and then call publish() - or
+    // release(handle) to give the slot back if construction throws. Until
+    // publish() the slot's state is still Free and no handle to it is in use.
+    [[nodiscard]] Task* reserve(TaskPriority priority, TaskHandle& out_handle);
+
+    // Makes a reserved slot's contents visible to whoever next observes `state`.
+    void publish(Task& task, TaskState state) noexcept {
+        task.state.store(state, std::memory_order_release);
+    }
+
     // Returns the task for `handle`, or nullptr when the handle is stale - that
     // is, when the slot has since been recycled. A stale handle is not an error:
     // it is how "this task finished a while ago" is represented.

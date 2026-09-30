@@ -229,3 +229,87 @@ TB_TEST("stats account for every executed task") {
     // Counted per worker; must agree with the base runtime's own completion count.
     TB_CHECK_EQ(stats.tasks_executed, runtime.completed_task_count());
 }
+
+// ---- Phase I Stage 3: in-place submission ------------------------------------
+
+namespace {
+
+// Copy can throw, move cannot: the shape that makes submitting a const lvalue
+// fail AFTER the pool slot was reserved.
+struct ThrowingCopy {
+    int* counter;
+    bool throws;
+    ThrowingCopy(int* c, bool t) : counter(c), throws(t) {}
+    ThrowingCopy(const ThrowingCopy& other) : counter(other.counter), throws(other.throws) {
+        if (throws) {
+            throw 42;  // conditional, so the compiler cannot prove the code after it dead
+        }
+    }
+    ThrowingCopy(ThrowingCopy&& other) noexcept : counter(other.counter), throws(false) {}
+    void operator()() const { ++*counter; }
+};
+
+} // namespace
+
+TB_TEST("in-place submit runs lvalue, const and rvalue callables exactly once") {
+    RuntimeConfig config;
+    config.worker_count  = 4;
+    config.task_capacity = 4096;
+    config.optimizations = thunderbolt::kOptInPlaceSubmit | thunderbolt::kOptThreadCache;
+    ThunderboltRuntime runtime(config);
+
+    std::atomic<int> ran{0};
+    auto             lvalue = [&ran] { ran.fetch_add(1); };
+    const auto       konst  = [&ran] { ran.fetch_add(10); };
+    (void)runtime.submit(lvalue);
+    (void)runtime.submit(konst);
+    (void)runtime.submit([&ran](TaskContext&) { ran.fetch_add(100); });
+    runtime.wait_all();
+    TB_CHECK_EQ(ran.load(), 111);
+}
+
+TB_TEST("in-place submit whose callable throws on copy leaks neither slot nor count") {
+    RuntimeConfig config;
+    config.worker_count  = 2;
+    config.task_capacity = 4096;
+    config.optimizations = thunderbolt::kOptInPlaceSubmit;
+    ThunderboltRuntime runtime(config);
+
+    int              counter = 0;
+    const ThrowingCopy callable(&counter, true);
+    for (int i = 0; i < 5000; ++i) {  // more than the pool holds: a leak would exhaust it
+        bool threw = false;
+        try {
+            (void)runtime.submit(callable);
+        } catch (int) {
+            threw = true;
+        }
+        TB_CHECK(threw);
+    }
+    runtime.wait_all();  // would hang if outstanding_ had been left incremented
+    TB_CHECK_EQ(runtime.pool_acquire_count(), 5000u);
+    TB_CHECK_EQ(runtime.inline_execution_count(), 0u);
+    TB_CHECK_EQ(counter, 0);
+}
+
+TB_TEST("in-place submit degrades to inline execution when the pool is exhausted") {
+    RuntimeConfig config;
+    config.worker_count  = 1;
+    config.task_capacity = 4;
+    config.optimizations = thunderbolt::kOptInPlaceSubmit;
+    ThunderboltRuntime runtime(config);
+
+    std::atomic<bool> gate{false};
+    std::atomic<int>  ran{0};
+    for (int i = 0; i < 4; ++i) {
+        (void)runtime.submit([&gate, &ran] {
+            while (!gate.load()) { std::this_thread::yield(); }
+            ran.fetch_add(1);
+        });
+    }
+    (void)runtime.submit([&ran] { ran.fetch_add(1); });  // pool is full: runs inline
+    TB_CHECK_EQ(runtime.inline_execution_count(), 1u);
+    gate.store(true);
+    runtime.wait_all();
+    TB_CHECK_EQ(ran.load(), 5);
+}

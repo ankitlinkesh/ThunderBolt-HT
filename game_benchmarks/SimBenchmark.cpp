@@ -36,6 +36,8 @@ std::uint32_t stage_bits(const std::string& name) {
     for (std::size_t i = prefix.size(); i < name.size(); ++i) {
         if (name[i] == '2') {
             bits |= thunderbolt::kOptThreadCache;
+        } else if (name[i] == '3') {
+            bits |= thunderbolt::kOptInPlaceSubmit;
         }
     }
     return bits;

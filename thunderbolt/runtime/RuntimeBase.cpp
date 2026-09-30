@@ -50,7 +50,9 @@ struct WaitDepthGuard {
 
 } // namespace
 
-RuntimeBase::RuntimeBase(RuntimeConfig config) : config_(config), pool_(config.task_capacity, (config.optimizations & kOptThreadCache) != 0) {}
+RuntimeBase::RuntimeBase(RuntimeConfig config) : config_(config), pool_(config.task_capacity, (config.optimizations & kOptThreadCache) != 0) {
+    in_place_submit_ = (config.optimizations & kOptInPlaceSubmit) != 0;
+}
 
 std::uint32_t RuntimeBase::resolve_worker_count(const RuntimeConfig& config) {
     if (config.worker_count != 0) {
@@ -80,6 +82,47 @@ TaskHandle RuntimeBase::submit(TaskDesc desc) {
     Task* task = pool_.get(handle);
     assert(task != nullptr);
     task->state.store(TaskState::Queued, std::memory_order_release);
+
+    enqueue_ready(handle, priority);
+    return handle;
+}
+
+TaskHandle RuntimeBase::submit_emplace(EmplaceFn construct, void* source, TaskPriority priority) {
+    // Same protocol as submit(), minus the two extra relocations of the body and
+    // the handle re-resolution. Ordering is unchanged: outstanding_ is counted
+    // before the task can become visible, and the state store that publishes it
+    // is the same release store.
+    outstanding_.fetch_add(1, std::memory_order_relaxed);
+
+    TaskHandle handle;
+    Task*      task = pool_.reserve(priority, handle);
+    if (task == nullptr) {
+        TaskDesc desc;
+        desc.priority = priority;
+        try {
+            construct(desc.function, source);
+        } catch (...) {
+            outstanding_.fetch_sub(1, std::memory_order_acq_rel);
+            throw;
+        }
+        run_inline(std::move(desc));
+        return TaskHandle{};
+    }
+
+    try {
+        construct(task->function, source);
+    } catch (...) {
+        // Copying a const callable can throw. Nothing was published, so give the
+        // slot and the count back and let the caller see the exception, exactly
+        // as it would have from building the TaskFunction before submit().
+        pool_.release(handle);
+        outstanding_.fetch_sub(1, std::memory_order_acq_rel);
+        throw;
+    }
+
+    // Created is a transient state nothing observes; publishing Queued directly
+    // is one release store instead of two.
+    pool_.publish(*task, TaskState::Queued);
 
     enqueue_ready(handle, priority);
     return handle;
