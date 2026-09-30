@@ -342,9 +342,6 @@ int run_granularity(const ExperimentOptions& options) {
                                                     inline_thunderbolt, options.submission,
                                                     probe_thunderbolt,
                                                     kOptThreadCache | kOptInPlaceSubmit));
-        legs.push_back(make_leg<ThunderboltRuntime>(
-            "tb_s5_succfast", workers, workload, inline_thunderbolt, options.submission,
-            probe_thunderbolt, kOptThreadCache | kOptInPlaceSubmit | kOptSuccessorFastPath));
         // Noise control: byte-identical configuration to "thunderbolt". Any gap
         // between the two is measurement noise (leg position, thermal state), and
         // is the yardstick a stage's gain has to clear.

@@ -65,15 +65,13 @@ enum RuntimeOpt : std::uint32_t {
     // TaskFunction, moving it into a TaskDesc, and moving it again into the slot.
     kOptInPlaceSubmit = 1u << 3,
 
-    // Phase I Stage 5: replaces the per-task successor spinlock pairs with one
-    // atomic flag word (epoch | closed | reserved-count). Registrants CAS it,
-    // completion closes it with one RMW and only takes the lock when somebody
-    // actually registered. See Task.hpp "fast successor protocol".
-    kOptSuccessorFastPath = 1u << 4,
-
     // Note: a per-worker non-empty-priority bitmask for pop_local (Phase I Stage 4)
     // was tried and REVERTED - three interleaved runs, all within the noise of an
     // identical-config control leg (tb_plain_control) - so it has no bit.
+
+    // Note: a flag-word successor fast path (Phase I Stage 5: epoch|closed|count, one RMW
+    // on complete, lock only if someone registered) was tried and REVERTED - identical to
+    // tb_s23 (238 vs 238 ns/task) - so it has no bit. See commit ce75ea0.
 };
 
 struct RuntimeConfig {

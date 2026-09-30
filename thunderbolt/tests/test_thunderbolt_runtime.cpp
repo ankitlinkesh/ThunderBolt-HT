@@ -391,12 +391,6 @@ void successor_race(std::uint32_t optimizations, int rounds) {
 
 } // namespace
 
-TB_TEST("submit_after racing the predecessor's completion loses no dependent (lock protocol)") {
+TB_TEST("submit_after racing the predecessor's completion loses no dependent") {
     successor_race(thunderbolt::kOptThreadCache | thunderbolt::kOptInPlaceSubmit, 4000);
-}
-
-TB_TEST("submit_after racing the predecessor's completion loses no dependent (fast path)") {
-    successor_race(thunderbolt::kOptThreadCache | thunderbolt::kOptInPlaceSubmit |
-                       thunderbolt::kOptSuccessorFastPath,
-                   4000);
 }

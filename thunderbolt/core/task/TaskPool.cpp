@@ -171,7 +171,7 @@ std::uint32_t TaskPool::preferred_shard() noexcept {
     return thread_slot();
 }
 
-TaskPool::TaskPool(std::uint32_t capacity, bool thread_cache, bool fast_successors)
+TaskPool::TaskPool(std::uint32_t capacity, bool thread_cache)
     : capacity_(capacity),
       cache_batch_(thread_cache && capacity >= kMinCapacityForCache
                        ? std::min<std::uint32_t>(kMaxBatch, capacity / (kShardCount * 4))
@@ -179,11 +179,6 @@ TaskPool::TaskPool(std::uint32_t capacity, bool thread_cache, bool fast_successo
       id_(g_next_pool_id.fetch_add(1, std::memory_order_relaxed)),
       slots_(std::make_unique<Task[]>(capacity)),
       shards_(std::make_unique<Shard[]>(kShardCount)) {
-    if (fast_successors) {
-        for (std::uint32_t i = 0; i < capacity; ++i) {
-            slots_[i].set_fast_successors(true);
-        }
-    }
     for (std::uint32_t shard = 0; shard < kShardCount; ++shard) {
         shards_[shard].free_list.reserve(capacity / kShardCount + 1);
     }

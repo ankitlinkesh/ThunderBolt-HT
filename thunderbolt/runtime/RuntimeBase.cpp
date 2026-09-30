@@ -50,8 +50,7 @@ struct WaitDepthGuard {
 
 } // namespace
 
-RuntimeBase::RuntimeBase(RuntimeConfig config) : config_(config), pool_(config.task_capacity, (config.optimizations & kOptThreadCache) != 0,
-              (config.optimizations & kOptSuccessorFastPath) != 0) {
+RuntimeBase::RuntimeBase(RuntimeConfig config) : config_(config), pool_(config.task_capacity, (config.optimizations & kOptThreadCache) != 0) {
     in_place_submit_ = (config.optimizations & kOptInPlaceSubmit) != 0;
 }
 
