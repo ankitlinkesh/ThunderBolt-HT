@@ -107,9 +107,14 @@ third idea, a per-worker bitmask of non-empty priority deques, measured as noise
 These are per-task wins only. The `stress` simulation doesn't move (0.195 against Taskflow's 0.206
 ms/tick, within IQR), because its frame graph already submits only a handful of tasks per stage.
 
-One harness caveat surfaced along the way: the leg that runs directly after `standard` reads
-inflated (640 ns here for a config an identical control leg put at 429 ns). That is why the table
-above uses the `tb_plain_control` leg as the "stages off" figure.
+One harness flaw surfaced along the way: legs ran in a fixed order every repetition, so each leg
+always had the same predecessor, and position effects looked like leg effects. That produced the
+640 ns reading here for a config an identical control leg put at 429 ns. The clearest case was
+`taskflow_explicit`, which read 836 ns/task running directly after `taskflow_for_each` and 319 ns
+in its usual slot. The harness now shuffles leg order every repetition with a recorded seed
+(`--leg-order fixed|reverse|shuffle`, `--order-seed`). Under shuffle the per-task lead is
+**~1.5×** (237-261 ns against Taskflow's 355-390 across two runs). Result files in `docs/results`
+taken before this change used fixed order.
 
 **Beating `taskflow_for_each` needed a different fix, because it isn't a task-count comparison at
 all** — Taskflow's `for_each_index` partitions the range itself and runs a handful of tasks no

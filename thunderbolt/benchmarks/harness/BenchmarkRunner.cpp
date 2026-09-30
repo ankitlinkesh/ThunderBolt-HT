@@ -56,10 +56,10 @@ RunReport run_interleaved(const std::vector<Leg>& legs, const RunOptions& option
     // exists to avoid.
     //
     // The ORDER of the inner loop is not fixed: a fixed order gives each leg a
-    // permanent slot and predecessor, and measurement showed the leg that follows
-    // the lock-heavy `standard` leg reading ~50% high in that slot regardless of
-    // its own config. results are still stored by leg index, so callers indexing
-    // report.legs are unaffected.
+    // permanent slot and predecessor, so a position effect cannot be told apart
+    // from a leg effect. Measured: taskflow_explicit read 836 ns/task directly
+    // after taskflow_for_each and 319 in its usual slot. Results are still stored
+    // by leg index, so callers indexing report.legs are unaffected.
     std::mt19937_64 rng(options.order_seed);
     std::vector<std::size_t> order(legs.size());
     std::iota(order.begin(), order.end(), std::size_t{0});
