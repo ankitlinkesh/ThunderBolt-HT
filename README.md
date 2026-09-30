@@ -195,6 +195,25 @@ below, from an earlier session at the previous per-batch task granularity, still
 findings (stealing beats static, StandardRuntime saturates past 4 workers) even though the
 absolute ms/tick figures in this README predate this fix and are higher than the table above.
 
+**Fusing the entity chains took the frame from ten barriered stages to three.** Every stage in a
+chain reads other entities only from the previous frame (`in`) and its own entity's output only at
+its own index, so running a whole chain over one batch computes exactly what the ten stages did.
+The hash stays `6e96f79b393cbd12`. The Taskflow graph and StandardRuntime got the same fusion, so
+the comparison stays like for like (`docs/results/simulation_stress_fused.json`, alternating
+runs of the old and new binaries):
+
+| leg | before (2 runs) | after (2 runs) | vs serial after |
+|---|---|---|---|
+| standard | 0.213 / 0.238 | 0.174 / 0.180 | 3.7× |
+| **thunderbolt** | 0.167 / 0.191 | **0.160 / 0.161** | **4.1×** |
+| taskflow | 0.191 / 0.213 | 0.182 / 0.187 | 3.5× |
+
+StandardRuntime gained the most, because it paid the most per barrier, so Thunderbolt's margin
+over it narrowed. Thunderbolt stays ~1.15× ahead of Taskflow. The NPC chain is 85-90% of the
+work, almost all of it neighbour perception. With per-tick scheduling now around 0.04 ms, the next
+real gain is in that kernel, not in the schedule. Merging all three chains into one stage was
+also tried and measured as noise.
+
 Absolute figures move between sessions with the machine's thermal state; the *ratios* are what
 interleaving makes trustworthy, and they hold across runs.
 
