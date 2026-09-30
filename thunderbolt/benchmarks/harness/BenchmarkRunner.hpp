@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace thunderbolt::bench {
@@ -37,6 +38,7 @@ struct Sample {
     double clock_mhz      = 0.0;  // averaged across the run; 0 when unavailable
     bool   throttled      = false;
     bool   warmup         = false;
+    int    position       = 0;    // 0-based slot within its repetition
 };
 
 // One thing being compared - a runtime, a scheduler mode, a worker count.
@@ -78,7 +80,25 @@ private:
     std::vector<std::pair<std::string, std::uint64_t>> entries_;
 };
 
+// The order legs run in within one repetition.
+//   Fixed   - always declaration order. Every leg keeps one position and one
+//             predecessor forever, so a position effect is indistinguishable from
+//             a leg effect. Kept only to reproduce old runs and as a diagnostic.
+//   Reverse - always reverse declaration order. Diagnostic: if an anomaly moves
+//             with the position it is not about the leg.
+//   Shuffle - a fresh seeded permutation per repetition (Fisher-Yates over a
+//             std::mt19937_64; the seed is recorded). Each leg lands in each
+//             position, and behind each predecessor, equally often in expectation.
+//             The default.
+enum class LegOrder { Fixed, Reverse, Shuffle };
+
+[[nodiscard]] const char* to_string(LegOrder order);
+[[nodiscard]] bool        parse_leg_order(std::string_view text, LegOrder& out);
+
 struct RunOptions {
+    LegOrder      leg_order = LegOrder::Shuffle;
+    std::uint64_t order_seed = 0x7B01715EEDULL;
+
     // S57 asks for at least 20. Fewer makes the median unstable on a machine
     // whose timings are this noisy.
     int repetitions = 20;

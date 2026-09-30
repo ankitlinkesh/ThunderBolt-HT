@@ -35,9 +35,12 @@ void print_usage() {
         "  --reps N           Measured repetitions per leg (default: 20)\n"
         "  --warmup N         Discarded warmup rounds (default: 3)\n"
         "  --cooldown-ms N    Pause between samples (default: 25)\n"
+        "  --leg-order MODE   shuffle (default, seeded per-rep permutation), fixed or\n"
+        "                     reverse (diagnostics only; a fixed order biases legs)\n"
+        "  --order-seed N     Seed for the shuffle (recorded in the JSON)\n"
         "  --out PATH         Write the results document here\n"
         "\n"
-        "The protocol is fixed and not configurable: legs are interleaved A/B/A/B,\n"
+        "The protocol: legs are interleaved A/B/A/B in a seeded random order per repetition,\n"
         "results are reported as median and IQR, and samples taken while the CPU was\n"
         "clocked below its nominal range are flagged rather than averaged in.\n");
 }
@@ -99,6 +102,15 @@ int main(int argc, char** argv) {
             unsigned long long value = 0;
             take_uint(value);
             options.run.cooldown = std::chrono::milliseconds(static_cast<long long>(value));
+        } else if (std::strcmp(arg, "--leg-order") == 0 && more) {
+            if (!parse_leg_order(argv[++i], options.run.leg_order)) {
+                std::fprintf(stderr, "error: --leg-order must be shuffle, fixed or reverse\n");
+                return 2;
+            }
+        } else if (std::strcmp(arg, "--order-seed") == 0) {
+            unsigned long long value = 0;
+            take_uint(value);
+            options.run.order_seed = value;
         } else if (std::strcmp(arg, "--submission") == 0 && more) {
             const std::string mode = argv[++i];
             if (mode == "forkjoin") {

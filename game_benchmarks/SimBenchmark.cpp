@@ -189,6 +189,8 @@ int run_simulation_benchmark(const SimBenchmarkOptions& options) {
     RunOptions run_options;
     run_options.repetitions = options.repetitions;
     run_options.warmup      = options.warmup;
+    run_options.leg_order   = options.leg_order;
+    run_options.order_seed  = options.order_seed;
 
     const RunReport report = run_interleaved(legs, run_options);
 

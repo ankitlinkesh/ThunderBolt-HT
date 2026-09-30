@@ -58,6 +58,7 @@ void print_usage() {
         "                   serial,standard,thunderbolt,taskflow\n"
         "  --reps N         Measured repetitions per leg (default 8)\n"
         "  --warmup N       Discarded warmup rounds (default 2)\n"
+        "  --leg-order MODE shuffle (default), fixed or reverse; --order-seed N\n"
         "  --out PATH       Write the results document here\n"
         "  --frame-times    Report the per-tick DISTRIBUTION (median/p99/1pct low) instead\n"
         "                   of run medians. Answers S59.8; the A/B path cannot.\n"
@@ -110,6 +111,8 @@ int main(int argc, char** argv) {
     std::vector<std::string> ab_legs;
     int                      reps        = 8;
     int                      warmup      = 2;
+    thunderbolt::bench::LegOrder leg_order = thunderbolt::bench::LegOrder::Shuffle;
+    std::uint64_t            order_seed  = 0x7B01715EEDULL;
     std::string              output_path;
     bool                     frame_times = false;
     bool                     affinity_on = false;
@@ -173,6 +176,10 @@ int main(int argc, char** argv) {
             std::uint64_t value = 0;
             if (!parse_uint(argv[++i], value)) { return 2; }
             warmup = static_cast<int>(value);
+        } else if (std::strcmp(arg, "--leg-order") == 0 && more) {
+            if (!thunderbolt::bench::parse_leg_order(argv[++i], leg_order)) { return 2; }
+        } else if (std::strcmp(arg, "--order-seed") == 0 && more) {
+            if (!parse_uint(argv[++i], order_seed)) { return 2; }
         } else if (std::strcmp(arg, "--frame-times") == 0) {
             frame_times = true;
         } else if (std::strcmp(arg, "--affinity") == 0) {
@@ -204,6 +211,8 @@ int main(int argc, char** argv) {
         bench.legs        = ab_legs;
         bench.repetitions = reps;
         bench.warmup      = warmup;
+        bench.leg_order   = leg_order;
+        bench.order_seed  = order_seed;
         bench.output_path = output_path;
         bench.affinity    = affinity_on ? thunderbolt::AffinityMode::TopologyAware
                                         : thunderbolt::AffinityMode::Disabled;

@@ -20,6 +20,7 @@
 #include <engine/core/Simulation.hpp>
 
 #include <thunderbolt/api/RuntimeConfig.hpp>
+#include "../thunderbolt/benchmarks/harness/BenchmarkRunner.hpp"
 
 namespace tbworld {
 
@@ -35,6 +36,8 @@ struct SimBenchmarkOptions {
 
     int         repetitions = 8;
     int         warmup      = 2;
+    thunderbolt::bench::LegOrder leg_order  = thunderbolt::bench::LegOrder::Shuffle;
+    std::uint64_t                order_seed = 0x7B01715EEDULL;
     std::string output_path;
 
     // S17. Held identical across every leg, so pinning is a variable under test

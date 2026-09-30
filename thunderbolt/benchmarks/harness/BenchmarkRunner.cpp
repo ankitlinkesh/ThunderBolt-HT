@@ -1,5 +1,8 @@
 #include "BenchmarkRunner.hpp"
 
+#include <algorithm>
+#include <numeric>
+#include <random>
 #include <thread>
 
 namespace thunderbolt::bench {
@@ -12,6 +15,25 @@ void cooldown_for(std::chrono::milliseconds duration) {
 }
 
 } // namespace
+
+const char* to_string(LegOrder order) {
+    switch (order) {
+        case LegOrder::Fixed:   return "fixed";
+        case LegOrder::Reverse: return "reverse";
+        case LegOrder::Shuffle: return "shuffle";
+    }
+    return "?";
+}
+
+bool parse_leg_order(std::string_view text, LegOrder& out) {
+    for (LegOrder candidate : {LegOrder::Fixed, LegOrder::Reverse, LegOrder::Shuffle}) {
+        if (text == to_string(candidate)) {
+            out = candidate;
+            return true;
+        }
+    }
+    return false;
+}
 
 RunReport run_interleaved(const std::vector<Leg>& legs, const RunOptions& options) {
     RunReport report;
@@ -32,10 +54,32 @@ RunReport run_interleaved(const std::vector<Leg>& legs, const RunOptions& option
     // loop is the leg, so the schedule is A B A B rather than AAAA BBBB. Reversing
     // these two loops would silently reintroduce the drift bias this whole harness
     // exists to avoid.
+    //
+    // The ORDER of the inner loop is not fixed: a fixed order gives each leg a
+    // permanent slot and predecessor, and measurement showed the leg that follows
+    // the lock-heavy `standard` leg reading ~50% high in that slot regardless of
+    // its own config. results are still stored by leg index, so callers indexing
+    // report.legs are unaffected.
+    std::mt19937_64 rng(options.order_seed);
+    std::vector<std::size_t> order(legs.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    if (options.leg_order == LegOrder::Reverse) {
+        std::reverse(order.begin(), order.end());
+    }
+
     for (int round = 0; round < total_rounds; ++round) {
         const bool is_warmup = round < options.warmup;
 
-        for (std::size_t i = 0; i < legs.size(); ++i) {
+        if (options.leg_order == LegOrder::Shuffle) {
+            // Hand-rolled Fisher-Yates: std::shuffle's result is implementation
+            // defined, and the recorded seed must reproduce the same schedule.
+            for (std::size_t k = order.size(); k > 1; --k) {
+                std::swap(order[k - 1], order[static_cast<std::size_t>(rng() % k)]);
+            }
+        }
+
+        for (std::size_t slot = 0; slot < order.size(); ++slot) {
+            const std::size_t i = order[slot];
             cooldown_for(options.cooldown);
 
             const double mhz_before = sample_current_mhz();
@@ -45,6 +89,7 @@ RunReport run_interleaved(const std::vector<Leg>& legs, const RunOptions& option
             Sample sample;
             sample.seconds = seconds;
             sample.warmup  = is_warmup;
+            sample.position = static_cast<int>(slot);
 
             if (mhz_before > 0.0 && mhz_after > 0.0) {
                 sample.clock_mhz = 0.5 * (mhz_before + mhz_after);

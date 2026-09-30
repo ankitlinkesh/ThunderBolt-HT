@@ -42,6 +42,8 @@ void write_options(JsonWriter& json, const RunOptions& options) {
     // Recorded explicitly so a reader never has to take the interleaving on
     // trust: a batched run would be a different, and invalid, protocol.
     json.field("interleaved", true);
+    json.field("leg_order", to_string(options.leg_order));
+    json.field("leg_order_seed", options.order_seed);
     json.field("statistic", "median_and_iqr");
     json.end_object();
 }
