@@ -50,49 +50,15 @@ void tick_with_taskflow(Simulation& simulation, tf::Executor& executor) {
     // measure graph construction rather than scheduling.
     tf::Taskflow flow;
 
-    // The same three chains, with the same ten stages and the same edges as
-    // Simulation::tick(). Any divergence here would show up as a determinism
-    // hash mismatch before it could show up as a timing difference.
-    tf::Task vehicle_lod = add_stage(flow, in.vehicles.size(), [&in, &out](std::size_t b,
-                                                                          std::size_t e) {
-        update_vehicle_lod(in, out, b, e);
-    });
-    tf::Task vehicle_physics =
-        add_stage(flow, in.vehicles.size(),
-                  [&in, &out](std::size_t b, std::size_t e) { update_vehicle_physics(in, out, b, e); });
-    vehicle_lod.precede(vehicle_physics);
-
-    tf::Task npc_lod = add_stage(
-        flow, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_lod(in, out, b, e); });
-    tf::Task npc_perception = add_stage(
-        flow, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_perception(in, out, b, e); });
-    tf::Task npc_decision = add_stage(
-        flow, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_decision(in, out, b, e); });
-    tf::Task npc_movement = add_stage(
-        flow, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_movement(in, out, b, e); });
-    npc_lod.precede(npc_perception);
-    npc_perception.precede(npc_decision);
-    npc_decision.precede(npc_movement);
-
-    tf::Task air_atmosphere = add_stage(
-        flow, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_atmosphere(in, out, b, e); });
-    tf::Task air_aero = add_stage(
-        flow, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_aerodynamics(in, out, b, e); });
-    tf::Task air_propulsion = add_stage(
-        flow, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_propulsion(in, out, b, e); });
-    tf::Task air_integrate = add_stage(
-        flow, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_integrate(in, out, b, e); });
-    air_atmosphere.precede(air_aero);
-    air_aero.precede(air_propulsion);
-    air_propulsion.precede(air_integrate);
+    // The same three fused chains as Simulation::tick(): one graph node per
+    // chain (update_*_chain), no edges needed because the chains are independent
+    // and every intra-chain dependency is entity-local.
+    add_stage(flow, in.vehicles.size(),
+              [&in, &out](std::size_t b, std::size_t e) { update_vehicle_chain(in, out, b, e); });
+    add_stage(flow, in.npcs.size(),
+              [&in, &out](std::size_t b, std::size_t e) { update_npc_chain(in, out, b, e); });
+    add_stage(flow, in.aircraft.size(),
+              [&in, &out](std::size_t b, std::size_t e) { update_aircraft_chain(in, out, b, e); });
 
     executor.run(flow).wait();
 

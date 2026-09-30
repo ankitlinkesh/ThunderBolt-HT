@@ -67,4 +67,31 @@ void update_aircraft_propulsion(const WorldState& in, WorldState& out, std::size
 void update_aircraft_integrate(const WorldState& in, WorldState& out, std::size_t begin,
                                std::size_t end) noexcept;
 
+// --- fused per-entity chains ----------------------------------------------
+// Each chain is entity-local: every stage reads `in` (previous frame) for OTHER
+// entities and reads `out` only at its OWN index, written by an earlier stage of
+// the same chain (NPC perception reads in.npcs.position of neighbours, never
+// out). So running the whole chain over one batch, stage after stage, computes
+// exactly what ten barriered stages did - same kernels, same per-entity order -
+// and needs no barrier inside the chain. Hash-identical by construction.
+inline void update_vehicle_chain(const WorldState& in, WorldState& out, std::size_t b,
+                                 std::size_t e) noexcept {
+    update_vehicle_lod(in, out, b, e);
+    update_vehicle_physics(in, out, b, e);
+}
+inline void update_npc_chain(const WorldState& in, WorldState& out, std::size_t b,
+                             std::size_t e) noexcept {
+    update_npc_lod(in, out, b, e);
+    update_npc_perception(in, out, b, e);
+    update_npc_decision(in, out, b, e);
+    update_npc_movement(in, out, b, e);
+}
+inline void update_aircraft_chain(const WorldState& in, WorldState& out, std::size_t b,
+                                  std::size_t e) noexcept {
+    update_aircraft_atmosphere(in, out, b, e);
+    update_aircraft_aerodynamics(in, out, b, e);
+    update_aircraft_propulsion(in, out, b, e);
+    update_aircraft_integrate(in, out, b, e);
+}
+
 } // namespace tbworld

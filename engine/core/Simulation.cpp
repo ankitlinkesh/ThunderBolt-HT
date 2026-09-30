@@ -139,12 +139,12 @@ void Simulation::tick(ITaskRuntime& runtime) {
     last_frame_ = FrameStats{};
     std::vector<TaskHandle> scratch;
 
-    // Owns this frame's per-stage claim cursors. Sized to the ten stages below
+    // Owns this frame's per-stage claim cursors. Sized to the three stages below
     // so no stage's push_back needs to grow it, though correctness does not
     // depend on that - see submit_stage's comment on why a reallocation here
     // cannot invalidate a pointer a task is already holding.
     std::vector<std::unique_ptr<std::atomic<std::size_t>>> cursor_storage;
-    cursor_storage.reserve(10);
+    cursor_storage.reserve(3);
 
     // Three independent chains, each with real internal ordering. They run
     // concurrently with one another, which is where the frame's width comes from;
@@ -154,50 +154,22 @@ void Simulation::tick(ITaskRuntime& runtime) {
     //   npcs     : lod -> perception -> decision -> movement
     //   aircraft : atmosphere -> aerodynamics -> propulsion -> integrate
 
+    // Fused: each chain is one stage (see Systems.hpp, update_*_chain). Three
+    // independent stages, no barrier between a chain's steps.
     TaskHandle vehicle_gate = submit_stage(
         runtime, scratch, cursor_storage, TaskHandle{}, in.vehicles.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_vehicle_lod(in, out, b, e); },
+        [&in, &out](std::size_t b, std::size_t e) { update_vehicle_chain(in, out, b, e); },
         last_frame_.tasks_submitted);
-    vehicle_gate = submit_stage(
-        runtime, scratch, cursor_storage, vehicle_gate, in.vehicles.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_vehicle_physics(in, out, b, e); },
-        last_frame_.tasks_submitted);
-
     TaskHandle npc_gate = submit_stage(
         runtime, scratch, cursor_storage, TaskHandle{}, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_lod(in, out, b, e); },
+        [&in, &out](std::size_t b, std::size_t e) { update_npc_chain(in, out, b, e); },
         last_frame_.tasks_submitted);
-    npc_gate = submit_stage(
-        runtime, scratch, cursor_storage, npc_gate, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_perception(in, out, b, e); },
-        last_frame_.tasks_submitted);
-    npc_gate = submit_stage(
-        runtime, scratch, cursor_storage, npc_gate, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_decision(in, out, b, e); },
-        last_frame_.tasks_submitted);
-    npc_gate = submit_stage(
-        runtime, scratch, cursor_storage, npc_gate, in.npcs.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_npc_movement(in, out, b, e); },
-        last_frame_.tasks_submitted);
-
     TaskHandle air_gate = submit_stage(
         runtime, scratch, cursor_storage, TaskHandle{}, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_atmosphere(in, out, b, e); },
-        last_frame_.tasks_submitted);
-    air_gate = submit_stage(
-        runtime, scratch, cursor_storage, air_gate, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_aerodynamics(in, out, b, e); },
-        last_frame_.tasks_submitted);
-    air_gate = submit_stage(
-        runtime, scratch, cursor_storage, air_gate, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_propulsion(in, out, b, e); },
-        last_frame_.tasks_submitted);
-    air_gate = submit_stage(
-        runtime, scratch, cursor_storage, air_gate, in.aircraft.size(),
-        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_integrate(in, out, b, e); },
+        [&in, &out](std::size_t b, std::size_t e) { update_aircraft_chain(in, out, b, e); },
         last_frame_.tasks_submitted);
 
-    last_frame_.stages = 10;
+    last_frame_.stages = 3;
 
     // Wait on the three chain tails rather than wait_all(): this is a frame
     // barrier for THIS frame's work, and wait_all() would also absorb anything
@@ -228,27 +200,11 @@ void Simulation::tick_serial() {
     };
 
     run_batched(in.vehicles.size(),
-                [&](std::size_t b, std::size_t e) { update_vehicle_lod(in, out, b, e); });
-    run_batched(in.vehicles.size(),
-                [&](std::size_t b, std::size_t e) { update_vehicle_physics(in, out, b, e); });
-
+                [&](std::size_t b, std::size_t e) { update_vehicle_chain(in, out, b, e); });
     run_batched(in.npcs.size(),
-                [&](std::size_t b, std::size_t e) { update_npc_lod(in, out, b, e); });
-    run_batched(in.npcs.size(),
-                [&](std::size_t b, std::size_t e) { update_npc_perception(in, out, b, e); });
-    run_batched(in.npcs.size(),
-                [&](std::size_t b, std::size_t e) { update_npc_decision(in, out, b, e); });
-    run_batched(in.npcs.size(),
-                [&](std::size_t b, std::size_t e) { update_npc_movement(in, out, b, e); });
-
+                [&](std::size_t b, std::size_t e) { update_npc_chain(in, out, b, e); });
     run_batched(in.aircraft.size(),
-                [&](std::size_t b, std::size_t e) { update_aircraft_atmosphere(in, out, b, e); });
-    run_batched(in.aircraft.size(),
-                [&](std::size_t b, std::size_t e) { update_aircraft_aerodynamics(in, out, b, e); });
-    run_batched(in.aircraft.size(),
-                [&](std::size_t b, std::size_t e) { update_aircraft_propulsion(in, out, b, e); });
-    run_batched(in.aircraft.size(),
-                [&](std::size_t b, std::size_t e) { update_aircraft_integrate(in, out, b, e); });
+                [&](std::size_t b, std::size_t e) { update_aircraft_chain(in, out, b, e); });
 
     world_.swap_buffers();
     world_.advance_tick();
