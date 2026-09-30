@@ -38,6 +38,7 @@ approaches that were tried and measured to do nothing.
 | Linux + Clang support, GitHub Actions CI (11 jobs) | ✅ all green |
 | `find_package(Thunderbolt)` / install support | ✅ verified against a real external consumer |
 | vcpkg overlay port, Conan recipe | ✅ both verified end-to-end (build + link + run) |
+| Per-thread slot cache + in-place task construction | ✅ ~1.58× faster per task than Taskflow |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
 123 unit tests pass under Debug, Release and AddressSanitizer. **28+ of them are conformance
@@ -85,6 +86,30 @@ expensive operation but **cache-line contention**: five global atomic counters p
 into one 64-byte line, ping-ponging across eight cores. Sharding the four that are only ever
 *reported*, and isolating the fifth on its own line, roughly halved per-task cost. See
 [docs/RESULTS.md](docs/RESULTS.md).
+
+**Then two more stages widened the lead to ~1.5×** (`docs/results/granularity_stage23.json`, same
+harness, all legs interleaved in one run, on AC power):
+
+| leg | per-task cost | R² |
+|---|---|---|
+| thunderbolt, stages off (`kOptNone`) | 429 ns | 0.989 |
+| thunderbolt, per-thread slot cache only | 308 ns | 0.991 |
+| thunderbolt, in-place construction only | 343 ns | 0.995 |
+| **thunderbolt, both (the new default)** | **286 ns** | 0.998 |
+| taskflow, explicit tasks | 451 ns | 0.992 |
+
+The **per-thread slot cache** has each thread take 64 free slots per lock acquisition instead of
+one. **In-place construction** builds the task body straight into its pool slot instead of
+building it, moving it into a `TaskDesc`, and moving it again. Both reproduced across two
+independent runs by the agent that built them, and once more in a separate verification run. A
+third idea, a per-worker bitmask of non-empty priority deques, measured as noise and was removed.
+
+These are per-task wins only. The `stress` simulation doesn't move (0.195 against Taskflow's 0.206
+ms/tick, within IQR), because its frame graph already submits only a handful of tasks per stage.
+
+One harness caveat surfaced along the way: the leg that runs directly after `standard` reads
+inflated (640 ns here for a config an identical control leg put at 429 ns). That is why the table
+above uses the `tb_plain_control` leg as the "stages off" figure.
 
 **Beating `taskflow_for_each` needed a different fix, because it isn't a task-count comparison at
 all** — Taskflow's `for_each_index` partitions the range itself and runs a handful of tasks no

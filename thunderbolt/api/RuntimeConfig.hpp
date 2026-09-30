@@ -96,8 +96,10 @@ struct RuntimeConfig {
     // StandardRuntime, which has one strategy by definition - it is the baseline.
     SchedulerMode scheduler = SchedulerMode::WorkStealing;
 
-    // Bitwise OR of RuntimeOpt. Zero is the shipped behaviour.
-    std::uint32_t optimizations = kOptNone;
+    // Bitwise OR of RuntimeOpt. The default is the shipped behaviour: the two
+    // Phase I stages that measured as real wins. Benchmark legs set this
+    // explicitly, so kOptNone still reproduces the pre-Stage-2 runtime.
+    std::uint32_t optimizations = kOptThreadCache | kOptInPlaceSubmit;
 
     // Off by default (S17). Lives here rather than on one runtime so that it
     // stays constant across an A/B comparison instead of being one runtime's
