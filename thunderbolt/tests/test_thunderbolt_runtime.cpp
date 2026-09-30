@@ -355,7 +355,11 @@ void successor_race(std::uint32_t optimizations, int rounds) {
                 const TaskHandle target = handles[static_cast<std::size_t>(round)];
                 // Burn a slot or two so the registration lands at a varying offset
                 // from the predecessor's completion.
-                for (volatile int spin = 0; spin < (round & 63); ++spin) {}
+                // (A signal fence, not a volatile counter: ++ on a volatile is
+                // deprecated in C++20 and fails GCC/Clang builds under -Werror.)
+                for (int spin = 0; spin < (round & 63); ++spin) {
+                    std::atomic_signal_fence(std::memory_order_seq_cst);
+                }
                 (void)runtime.submit_after({target}, [&dependents_ran] {
                     dependents_ran.fetch_add(1, std::memory_order_relaxed);
                 });
