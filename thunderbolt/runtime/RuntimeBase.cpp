@@ -50,7 +50,7 @@ struct WaitDepthGuard {
 
 } // namespace
 
-RuntimeBase::RuntimeBase(RuntimeConfig config) : config_(config), pool_(config.task_capacity) {}
+RuntimeBase::RuntimeBase(RuntimeConfig config) : config_(config), pool_(config.task_capacity, (config.optimizations & kOptThreadCache) != 0) {}
 
 std::uint32_t RuntimeBase::resolve_worker_count(const RuntimeConfig& config) {
     if (config.worker_count != 0) {

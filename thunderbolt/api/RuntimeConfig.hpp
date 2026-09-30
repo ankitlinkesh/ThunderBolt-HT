@@ -53,6 +53,12 @@ enum RuntimeOpt : std::uint32_t {
     // making the RMW seq_cst keeps the ordering correct on weak memory models
     // rather than relying on x86's stronger guarantees.
     kOptSingleBarrierOnComplete = 1u << 1,
+
+    // Phase I Stage 2. Each thread keeps a small private cache of free slots and
+    // touches a free-list shard's mutex once per batch instead of once per task.
+    // Slots can sit in a thread's cache while another thread sees the pool as
+    // empty, so it is disabled for pools too small for that to be negligible.
+    kOptThreadCache = 1u << 2,
 };
 
 struct RuntimeConfig {

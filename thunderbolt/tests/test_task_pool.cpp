@@ -2,6 +2,7 @@
 
 #include <thunderbolt/core/task/TaskPool.hpp>
 
+#include <memory>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -181,4 +182,107 @@ TB_TEST("pool instrumentation balances and observes real contention") {
     // Contention is timing-dependent, so its exact value is not asserted - only
     // that the counter is readable and bounded by the number of lock attempts.
     TB_CHECK(pool.contended_lock_count() <= acquires + releases);
+}
+
+// ---- per-thread slot cache (Phase I Stage 2) ---------------------------------
+
+TB_TEST("cached pool: every slot is reachable from one thread and none is lost") {
+    constexpr std::uint32_t kCapacity = 4096;
+    TaskPool                pool(kCapacity, /*thread_cache=*/true);
+
+    for (int round = 0; round < 3; ++round) {
+        std::vector<TaskHandle> handles;
+        for (std::uint32_t i = 0; i < kCapacity; ++i) {
+            TaskHandle h = pool.acquire(trivial_task());
+            TB_CHECK(h.valid());
+            handles.push_back(h);
+        }
+        TB_CHECK(!pool.acquire(trivial_task()).valid());  // truly exhausted
+        TB_CHECK_EQ(pool.live_count(), kCapacity);
+
+        std::unordered_set<std::uint32_t> unique;
+        for (TaskHandle h : handles) {
+            unique.insert(h.index);
+        }
+        TB_CHECK_EQ(unique.size(), static_cast<std::size_t>(kCapacity));
+
+        for (TaskHandle h : handles) {
+            pool.release(h);
+        }
+        TB_CHECK_EQ(pool.live_count(), 0u);
+    }
+}
+
+TB_TEST("cached pool: one thread alternating between two pools loses nothing") {
+    constexpr std::uint32_t kCapacity = 2048;
+    TaskPool                a(kCapacity, true);
+    TaskPool                b(kCapacity, true);
+
+    std::vector<TaskHandle> ha, hb;
+    for (std::uint32_t i = 0; i < kCapacity; ++i) {
+        ha.push_back(a.acquire(trivial_task()));
+        hb.push_back(b.acquire(trivial_task()));
+        TB_CHECK(ha.back().valid() && hb.back().valid());
+    }
+    for (std::uint32_t i = 0; i < kCapacity; ++i) {
+        a.release(ha[i]);
+        b.release(hb[i]);
+    }
+    // Every slot must still be reachable in both pools after the thrashing.
+    for (std::uint32_t i = 0; i < kCapacity; ++i) {
+        TB_CHECK(a.acquire(trivial_task()).valid());
+        TB_CHECK(b.acquire(trivial_task()).valid());
+    }
+}
+
+TB_TEST("cached pool: a thread's cache never outlives or corrupts its pool") {
+    // Slots parked in this thread's cache belong to a pool that is then destroyed
+    // and replaced. The replacement may well reuse the address.
+    for (int round = 0; round < 4; ++round) {
+        auto pool = std::make_unique<TaskPool>(2048u, true);
+        TaskHandle h = pool->acquire(trivial_task());
+        pool->release(h);  // now parked in this thread's cache
+        pool.reset();
+    }
+    TaskPool fresh(2048u, true);
+    std::vector<TaskHandle> handles;
+    for (std::uint32_t i = 0; i < 2048; ++i) {
+        handles.push_back(fresh.acquire(trivial_task()));
+        TB_CHECK(handles.back().valid());
+    }
+    for (TaskHandle h : handles) {
+        fresh.release(h);
+    }
+}
+
+TB_TEST("cached pool: threads that acquire and release across threads lose nothing") {
+    constexpr std::uint32_t kCapacity = 8192;
+    TaskPool                pool(kCapacity, true);
+
+    // Producers acquire, consumers release: slots migrate between threads only
+    // through the shard mutexes.
+    std::vector<std::vector<TaskHandle>> batches(4);
+    std::vector<std::thread>             threads;
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&, t] {
+            for (int i = 0; i < 1500; ++i) {
+                TaskHandle h = pool.acquire(trivial_task());
+                TB_CHECK(h.valid());
+                batches[t].push_back(h);
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+    threads.clear();
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&, t] {
+            for (TaskHandle h : batches[(t + 1) % 4]) {
+                pool.release(h);
+            }
+        });
+    }
+    for (auto& th : threads) th.join();
+
+    TB_CHECK_EQ(pool.live_count(), 0u);
+    TB_CHECK_EQ(pool.acquire_count(), pool.release_count());
 }

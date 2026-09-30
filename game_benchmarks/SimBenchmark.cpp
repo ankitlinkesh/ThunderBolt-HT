@@ -24,6 +24,24 @@
 namespace tbworld {
 namespace {
 
+// Phase I stage legs: "thunderbolt_s<digits>" turns on one optimisation per digit
+// (2 = thread-local free-list cache), so a stage or a combination is an ordinary
+// interleaved A/B leg like the older thunderbolt_o* ones.
+std::uint32_t stage_bits(const std::string& name) {
+    const std::string prefix = "thunderbolt_s";
+    std::uint32_t     bits   = thunderbolt::kOptNone;
+    if (name.rfind(prefix, 0) != 0) {
+        return bits;
+    }
+    for (std::size_t i = prefix.size(); i < name.size(); ++i) {
+        if (name[i] == '2') {
+            bits |= thunderbolt::kOptThreadCache;
+        }
+    }
+    return bits;
+}
+
+
 using namespace thunderbolt;
 using namespace thunderbolt::bench;
 
@@ -87,6 +105,8 @@ Leg make_leg(const std::string& name, const SimBenchmarkOptions& options,
             config.optimizations = kOptSingleBarrierOnComplete;
         } else if (name == "thunderbolt_o12") {
             config.optimizations = kOptSkipEmptyDeques | kOptSingleBarrierOnComplete;
+        } else if (name.rfind("thunderbolt_s", 0) == 0) {
+            config.optimizations = stage_bits(name);
         } else if (name == "thunderbolt_pinned") {
             // S17 as a LEG, not a separate run. Comparing a pinned run against an
             // unpinned run measured minutes apart reintroduces exactly the
@@ -234,6 +254,8 @@ int run_simulation_benchmark(const SimBenchmarkOptions& options) {
                 config.optimizations = kOptSingleBarrierOnComplete;
             } else if (name == "thunderbolt_o12") {
                 config.optimizations = kOptSkipEmptyDeques | kOptSingleBarrierOnComplete;
+            } else if (name.rfind("thunderbolt_s", 0) == 0) {
+                config.optimizations = stage_bits(name);
             }
             std::unique_ptr<ITaskRuntime> runtime;
             if (name == "standard") {

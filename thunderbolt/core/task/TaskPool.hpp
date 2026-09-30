@@ -39,7 +39,10 @@ public:
     // so shard selection is a mask.
     static constexpr std::uint32_t kShardCount = 16;
 
-    explicit TaskPool(std::uint32_t capacity);
+    // `thread_cache` enables the per-thread slot cache (Phase I Stage 2). It is
+    // silently ignored for pools too small to spare slots for it.
+    explicit TaskPool(std::uint32_t capacity, bool thread_cache = false);
+    ~TaskPool();
 
     TaskPool(const TaskPool&)            = delete;
     TaskPool& operator=(const TaskPool&) = delete;
@@ -91,6 +94,15 @@ public:
     }
 
 private:
+    // Per-thread slot cache; defined in the .cpp. See TaskPool.cpp.
+    struct ThreadCache;
+    [[nodiscard]] static ThreadCache& thread_cache() noexcept;
+    static void                       drain_cache(ThreadCache& cache) noexcept;
+    void                              rebind_cache(ThreadCache& cache) noexcept;
+    void                              refill_cache(ThreadCache& cache);
+    void                              spill_cache(ThreadCache& cache) noexcept;
+    [[nodiscard]] bool                take_free_slot(std::uint32_t& index);
+
     // One shard per cache line: two shards sharing a line would reintroduce, as
     // false sharing, exactly the contention the sharding removes.
     TB_BEGIN_CACHE_ALIGNED_TYPE
@@ -111,6 +123,13 @@ private:
     void lock_counting(std::unique_lock<std::mutex>& lock) const;
 
     std::uint32_t capacity_;
+
+    // Slots moved per lock acquisition when the thread cache is on; 0 = cache off.
+    std::uint32_t cache_batch_ = 0;
+
+    // Never-reused identity, so a thread cache can tell "my pool" from a new pool
+    // that happens to occupy the same address.
+    std::uint64_t id_ = 0;
 
     // unique_ptr<Task[]> rather than vector<Task>: Task holds atomics and is
     // therefore neither copyable nor movable, which vector's growth path needs.
