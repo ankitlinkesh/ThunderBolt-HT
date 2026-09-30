@@ -38,7 +38,7 @@ approaches that were tried and measured to do nothing.
 | Linux + Clang support, GitHub Actions CI (11 jobs) | ✅ all green |
 | `find_package(Thunderbolt)` / install support | ✅ verified against a real external consumer |
 | vcpkg overlay port, Conan recipe | ✅ both verified end-to-end (build + link + run) |
-| Per-thread slot cache + in-place task construction | ✅ ~1.58× faster per task than Taskflow |
+| Per-thread slot cache + in-place task construction | ✅ ~1.5× faster per task than Taskflow |
 | Renderer, world, vehicles, aircraft | ⬜ roadmap |
 
 123 unit tests pass under Debug, Release and AddressSanitizer. **28+ of them are conformance
@@ -103,6 +103,10 @@ one. **In-place construction** builds the task body straight into its pool slot 
 building it, moving it into a `TaskDesc`, and moving it again. Both reproduced across two
 independent runs by the agent that built them, and once more in a separate verification run. A
 third idea, a per-worker bitmask of non-empty priority deques, measured as noise and was removed.
+A fourth, a lock-free-flag fast path that skips the successor-list spinlock for tasks nobody
+depends on, measured **238 against 238 ns/task** at every size and was reverted too. The race
+test written for it (threads calling `submit_after` on a task while it completes, 4000 times)
+stays as a regression guard for the lock protocol.
 
 These are per-task wins only. The `stress` simulation doesn't move (0.195 against Taskflow's 0.206
 ms/tick, within IQR), because its frame graph already submits only a handful of tasks per stage.
