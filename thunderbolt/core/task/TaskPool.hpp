@@ -41,7 +41,9 @@ public:
 
     // `thread_cache` enables the per-thread slot cache (Phase I Stage 2). It is
     // silently ignored for pools too small to spare slots for it.
-    explicit TaskPool(std::uint32_t capacity, bool thread_cache = false);
+    // `fast_successors` selects the flag-word successor protocol (Stage 5).
+    explicit TaskPool(std::uint32_t capacity, bool thread_cache = false,
+                      bool fast_successors = false);
     ~TaskPool();
 
     TaskPool(const TaskPool&)            = delete;

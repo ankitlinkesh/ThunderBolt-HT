@@ -10,6 +10,8 @@
 #include <thunderbolt/runtime/ThunderboltRuntime.hpp>
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -312,4 +314,89 @@ TB_TEST("in-place submit degrades to inline execution when the pool is exhausted
     gate.store(true);
     runtime.wait_all();
     TB_CHECK_EQ(ran.load(), 5);
+}
+
+// ---------------------------------------------------------------------------
+// Successor registration racing completion.
+//
+// The project's one real deadlock lived in this exact spot: a dependent that
+// registered onto a task that had already drained its successor list was never
+// notified. Here a predecessor is submitted and, at the same instant, several
+// threads call submit_after() on it - so registrations land before, during and
+// after its completion (and, with a recycled slot, after its generation moved).
+// Every dependent must run exactly once. A lost successor shows up as a counter
+// that never reaches its target, so the wait is bounded and a miss aborts rather
+// than hanging the suite.
+namespace {
+
+void successor_race(std::uint32_t optimizations, int rounds) {
+    constexpr int kRacers = 3;
+
+    RuntimeConfig config;
+    config.worker_count  = 4;
+    config.task_capacity = 4096;
+    config.optimizations = optimizations;
+    ThunderboltRuntime runtime(config);
+
+    std::atomic<long> dependents_ran{0};
+    std::atomic<int>  arrived{0};
+    std::atomic<int>  round_go{-1};
+    std::atomic<bool> stop{false};
+
+    std::vector<std::thread> racers;
+    std::vector<TaskHandle> handles(static_cast<std::size_t>(rounds));
+
+    for (int r = 0; r < kRacers; ++r) {
+        racers.emplace_back([&] {
+            for (int round = 0; round < rounds; ++round) {
+                while (round_go.load(std::memory_order_acquire) < round) {
+                    if (stop.load(std::memory_order_relaxed)) return;
+                }
+                const TaskHandle target = handles[static_cast<std::size_t>(round)];
+                // Burn a slot or two so the registration lands at a varying offset
+                // from the predecessor's completion.
+                for (volatile int spin = 0; spin < (round & 63); ++spin) {}
+                (void)runtime.submit_after({target}, [&dependents_ran] {
+                    dependents_ran.fetch_add(1, std::memory_order_relaxed);
+                });
+                arrived.fetch_add(1, std::memory_order_release);
+            }
+        });
+    }
+
+    for (int round = 0; round < rounds; ++round) {
+        arrived.store(0, std::memory_order_relaxed);
+        handles[static_cast<std::size_t>(round)] = runtime.submit([] {});
+        round_go.store(round, std::memory_order_release);
+        // The predecessor is already runnable on a worker while the racers register.
+        while (arrived.load(std::memory_order_acquire) < kRacers) {}
+    }
+    for (auto& t : racers) t.join();
+
+    const long expected = static_cast<long>(rounds) * kRacers;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (dependents_ran.load() < expected && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool all_ran = dependents_ran.load() == expected;
+    if (!all_ran) {
+        std::fprintf(stderr, "LOST SUCCESSOR: %ld of %ld dependents ran\n", dependents_ran.load(),
+                     expected);
+        std::fflush(stderr);
+        std::abort();  // a stuck runtime would hang its destructor too
+    }
+    runtime.wait_all();
+    TB_CHECK_EQ(dependents_ran.load(), expected);
+}
+
+} // namespace
+
+TB_TEST("submit_after racing the predecessor's completion loses no dependent (lock protocol)") {
+    successor_race(thunderbolt::kOptThreadCache | thunderbolt::kOptInPlaceSubmit, 4000);
+}
+
+TB_TEST("submit_after racing the predecessor's completion loses no dependent (fast path)") {
+    successor_race(thunderbolt::kOptThreadCache | thunderbolt::kOptInPlaceSubmit |
+                       thunderbolt::kOptSuccessorFastPath,
+                   4000);
 }
