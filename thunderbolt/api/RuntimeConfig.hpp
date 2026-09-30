@@ -64,6 +64,10 @@ enum RuntimeOpt : std::uint32_t {
     // constructs the callable directly into it, instead of building a
     // TaskFunction, moving it into a TaskDesc, and moving it again into the slot.
     kOptInPlaceSubmit = 1u << 3,
+
+    // Note: a per-worker non-empty-priority bitmask for pop_local (Phase I Stage 4)
+    // was tried and REVERTED - three interleaved runs, all within the noise of an
+    // identical-config control leg (tb_plain_control) - so it has no bit.
 };
 
 struct RuntimeConfig {
